@@ -1,0 +1,29 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+crash.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Lambda
+*.zip
+
+# 機密情報
+.env
+*.secret
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
