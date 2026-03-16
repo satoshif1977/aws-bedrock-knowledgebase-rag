@@ -2,6 +2,18 @@
 
 Amazon Bedrock Knowledge Bases × OpenSearch Serverless を使ったネイティブ RAG（検索拡張生成）の実装 PoC。
 
+## 動作画面
+
+| Streamlit Web UI（セマンティック検索 Q&A） | Bedrock Knowledge Bases（データソース同期済み） |
+|---|---|
+| ![Streamlit UI](docs/screenshots/05_streamlit_ui_answer.png) | ![KB Datasource](docs/screenshots/01_bedrock_kb_datasource_indexed.png) |
+
+| OpenSearch Serverless（Vectorsearch コレクション） | Lambda 関数 |
+|---|---|
+| ![OpenSearch](docs/screenshots/06_opensearch_collection_detail.png) | ![Lambda](docs/screenshots/07_lambda_function_list.png) |
+
+---
+
 ## アーキテクチャ
 
 ```
