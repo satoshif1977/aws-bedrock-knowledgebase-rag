@@ -16,6 +16,8 @@ Amazon Bedrock Knowledge Bases × OpenSearch Serverless を使ったネイティ
 
 ## アーキテクチャ
 
+![アーキテクチャ図](docs/Bedrock%20Knowledge%20Bases%20%C3%97%20OpenSearch%20Serverless%20RAG.png)
+
 ```
 ユーザー（Streamlit / API）
     │
