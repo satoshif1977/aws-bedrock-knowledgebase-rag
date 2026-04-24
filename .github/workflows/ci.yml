@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "~1.5"
+          terraform_version: "~1.6"
       - name: terraform fmt
         run: terraform fmt --check -recursive
       - name: terraform init
@@ -60,10 +60,11 @@ jobs:
             CKV_AWS_41,CKV_AWS_93,
             CKV_AWS_56,CKV_AWS_53,CKV_AWS_54,CKV_AWS_55,
             CKV_AWS_57,CKV_AWS_20,CKV_AWS_19,CKV_AWS_21,
-            CKV2_AWS_6,CKV2_AWS_61,
+            CKV_AWS_18,CKV_AWS_144,CKV_AWS_145,
+            CKV2_AWS_6,CKV2_AWS_61,CKV2_AWS_62,
             CKV_AWS_60,CKV_AWS_61,CKV_AWS_62,CKV_AWS_63,
-            CKV_AWS_274,CKV_AWS_286,CKV_AWS_287,CKV_AWS_288,CKV_AWS_289,
-            CKV2_AWS_40,CKV2_AWS_56,
+            CKV_AWS_274,CKV_AWS_286,CKV_AWS_287,CKV_AWS_288,CKV_AWS_289,CKV_AWS_290,
+            CKV_AWS_355,CKV2_AWS_40,CKV2_AWS_56,
             CKV_AWS_337,CKV2_AWS_34,
             CKV_AWS_66,CKV_AWS_363,CKV_AWS_45,CKV_AWS_50,
             CKV2_AWS_70,CKV_AWS_217,CKV_AWS_237,CKV_AWS_301,
@@ -71,5 +72,6 @@ jobs:
             CKV_AWS_59,CKV_AWS_76,CKV_AWS_73,CKV_AWS_120,
             CKV2_AWS_4,CKV2_AWS_51,CKV2_AWS_53,
             CKV_AWS_117,CKV_AWS_272,CKV_AWS_116,CKV_AWS_115,
-            CKV_AWS_173,CKV_AWS_158,CKV_AWS_338
+            CKV_AWS_173,CKV_AWS_158,CKV_AWS_338,
+            CKV_AWS_284,CKV_AWS_285
           output_format: cli
