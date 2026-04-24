@@ -4,10 +4,17 @@ AWS 接続なしでレスポンス生成・ハンドラーを検証する
 """
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import sys
-import os
+
+# モジュール読み込み前に環境変数を設定（module-level の os.environ アクセス対策）
+os.environ.setdefault("KNOWLEDGE_BASE_ID", "test-kb-id")
+os.environ.setdefault(
+    "GENERATION_MODEL_ARN",
+    "arn:aws:bedrock:ap-northeast-1::foundation-model/test",
+)
 
 sys.path.insert(0, os.path.dirname(__file__))
 from query_handler import lambda_handler, _response
@@ -52,14 +59,12 @@ class TestLambdaHandler:
         assert body["answer"] == "テスト回答です"
         assert body["query"] == "テスト質問"
 
-    @patch.dict("os.environ", {"KNOWLEDGE_BASE_ID": "x", "GENERATION_MODEL_ARN": "x"})
     def test_クエリ空で400(self):
         event = {"body": json.dumps({"query": ""})}
         result = lambda_handler(event, MagicMock())
         assert result["statusCode"] == 400
 
     @patch("query_handler.bedrock_agent_runtime")
-    @patch.dict("os.environ", {"KNOWLEDGE_BASE_ID": "x", "GENERATION_MODEL_ARN": "x"})
     def test_bedrock例外で500(self, mock_bedrock):
         mock_bedrock.retrieve_and_generate.side_effect = Exception("connection error")
         result = lambda_handler(self._make_event(), MagicMock())
