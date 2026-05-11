@@ -8,6 +8,12 @@
 ![Claude Cowork](https://img.shields.io/badge/Daily%20Use-Claude%20Cowork-blueviolet?logo=anthropic)
 ![Claude Skills](https://img.shields.io/badge/Custom-Skills%20Configured-green?logo=anthropic)
 
+
+## デモ
+
+![デモ GIF](docs/demo/demo.gif)
+
+
 Amazon Bedrock Knowledge Bases × OpenSearch Serverless を使ったネイティブ RAG（検索拡張生成）の実装 PoC。
 
 ## 動作画面
