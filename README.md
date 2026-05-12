@@ -224,6 +224,48 @@ terraform destroy
 
 ---
 
+## トラブルシューティング
+
+| 症状 | 原因 | 対処法 |
+|---|---|---|
+| Knowledge Base 作成で `ConflictException` | ベクトルインデックスが未作成 | セットアップ手順 3 のインデックス作成スクリプトを先に実行 |
+| `retrieve_and_generate()` で `ValidationException` | 推論プロファイル ARN を使用している | 基盤モデル ARN（`anthropic.claude-3-5-haiku-20241022-v1:0`）を直接指定する |
+| Streamlit で回答が空になる | ドキュメントの同期が未実行 | `aws bedrock-agent start-ingestion-job` で同期を実行してから再試行 |
+| `terraform destroy` が失敗 | S3 バージョニング有効バケットの削除マーカー | `aws s3api list-object-versions` → 手動削除 → `destroy` |
+| OpenSearch の接続エラー | コレクションエンドポイントが未取得 | `terraform output opensearch_endpoint` で確認してスクリプトに設定 |
+
+---
+
+## ローカル開発・テスト方法
+
+### Streamlit Web UI のローカル起動
+
+```bash
+pip install -r requirements.txt
+aws-vault exec personal-dev-source -- streamlit run app.py
+# http://localhost:8501 → サイドバーに Knowledge Base ID を入力
+```
+
+### Lambda RAG クエリの直接テスト
+
+```bash
+aws-vault exec personal-dev-source -- aws lambda invoke \
+  --function-name <lambda-function-name> \
+  --payload '{"query": "有給休暇の申請方法は？"}' \
+  response.json
+cat response.json
+```
+
+### Knowledge Base 同期状況の確認
+
+```bash
+aws-vault exec personal-dev-source -- aws bedrock-agent list-ingestion-jobs \
+  --knowledge-base-id <KB_ID> \
+  --data-source-id <DS_ID>
+```
+
+---
+
 ## AI 活用について
 
 本プロジェクトは以下の Anthropic ツールを活用して開発しています。
