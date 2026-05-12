@@ -102,7 +102,7 @@ aws-bedrock-knowledgebase-rag/
 - AWS CLI 設定済み（`aws-vault` 推奨）
 - Bedrock モデルアクセス有効化済み（東京リージョン）
   - `amazon.titan-embed-text-v2:0`
-  - `anthropic.claude-3-haiku-20240307-v1:0`
+  - `anthropic.claude-3-5-haiku-20241022-v1:0`
 
 ### 2. Terraform デプロイ
 
@@ -209,7 +209,7 @@ terraform destroy
 ### Bedrock Knowledge Bases
 
 - **OpenSearch Serverless ベクトルインデックスは Terraform 外で手動作成が必要**: Knowledge Base 作成前に `knn_vector` タイプのインデックスを OpenSearch に作成しておく必要がある。Terraform だけでは完結しないため、手順書（README）への記載が重要。
-- **`retrieve_and_generate()` は推論プロファイルをサポートしない**: 通常チャットで使うクロスリージョン推論プロファイル ARN（`jp.*`）はこの API では使えない。`anthropic.claude-3-haiku-20240307-v1:0` など基盤モデル ARN を直接指定する必要がある。
+- **`retrieve_and_generate()` は推論プロファイルをサポートしない**: 通常チャットで使うクロスリージョン推論プロファイル ARN（`jp.*`）はこの API では使えない。`anthropic.claude-3-5-haiku-20241022-v1:0` など基盤モデル ARN を直接指定する必要がある。
 - **OpenSearch Serverless は起動しているだけで課金される**: 最低 2 OCU（約 $0.24/時間）の課金が発生する。演習後は必ず `terraform destroy` を実行しないとコストが積み上がる。MEMORY として必ず残す。
 
 ### Terraform
