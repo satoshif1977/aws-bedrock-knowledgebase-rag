@@ -285,3 +285,7 @@ aws-vault exec personal-dev-source -- aws bedrock-agent list-ingestion-jobs \
 - [aws-rag-knowledgebase](https://github.com/satoshif1977/aws-rag-knowledgebase) - 前バージョン（S3 + Lambda + Bedrock 手動 RAG）
 - [aws-bedrock-agent](https://github.com/satoshif1977/aws-bedrock-agent) - Bedrock Agent を使った FAQ ボット
 - [aws-ecs-bedrock-chat](https://github.com/satoshif1977/aws-ecs-bedrock-chat) - ECS Fargate + Bedrock チャットアプリ（RAG モード搭載）
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and security policies.
