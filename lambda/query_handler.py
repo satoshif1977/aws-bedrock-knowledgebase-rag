@@ -19,9 +19,16 @@ bedrock_agent_runtime = boto3.client(
     region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
 )
 
-# ── 環境変数 ─────────────────────────────────────
-KNOWLEDGE_BASE_ID = os.environ["KNOWLEDGE_BASE_ID"]
-GENERATION_MODEL_ARN = os.environ["GENERATION_MODEL_ARN"]
+# ── 環境変数（起動時バリデーション） ──────────────
+def _require_env(key: str) -> str:
+    """必須環境変数を取得し、未設定の場合は起動時に RuntimeError を発生させる"""
+    value = os.environ.get(key)
+    if not value:
+        raise RuntimeError(f"必須環境変数 {key!r} が設定されていません")
+    return value
+
+KNOWLEDGE_BASE_ID = _require_env("KNOWLEDGE_BASE_ID")
+GENERATION_MODEL_ARN = _require_env("GENERATION_MODEL_ARN")
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
