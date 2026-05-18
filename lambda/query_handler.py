@@ -14,7 +14,10 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # ── クライアント初期化 ───────────────────────────
-bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name="ap-northeast-1")
+bedrock_agent_runtime = boto3.client(
+    "bedrock-agent-runtime",
+    region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
+)
 
 # ── 環境変数 ─────────────────────────────────────
 KNOWLEDGE_BASE_ID = os.environ["KNOWLEDGE_BASE_ID"]
