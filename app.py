@@ -3,6 +3,7 @@ Bedrock Knowledge Bases RAG - Streamlit Web UI
 起動: aws-vault exec personal-dev-source -- streamlit run app.py
 """
 import json
+import os
 
 import boto3
 import streamlit as st
@@ -30,6 +31,14 @@ with st.sidebar:
     )
     num_results = st.slider("検索件数", min_value=1, max_value=10, value=5)
     st.divider()
+    st.subheader("メタデータフィルター（オプション）")
+    use_filter = st.checkbox("フィルターを使用する")
+    filter_key = ""
+    filter_value = ""
+    if use_filter:
+        filter_key = st.text_input("フィルターキー", placeholder="例: category")
+        filter_value = st.text_input("フィルター値", placeholder="例: hr")
+    st.divider()
     st.caption("aws-bedrock-knowledgebase-rag PoC")
 
 # ── メイン画面 ───────────────────────────────────
@@ -43,7 +52,7 @@ if not knowledge_base_id:
 # ── Bedrock クライアント ─────────────────────────
 bedrock_agent_runtime = boto3.client(
     "bedrock-agent-runtime",
-    region_name="ap-northeast-1",
+    region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-1"),
 )
 
 # ── クエリ入力 ───────────────────────────────────
@@ -55,6 +64,11 @@ if st.button("質問する", type="primary", disabled=not query):
             generation_model_arn = (
                 f"arn:aws:bedrock:ap-northeast-1::foundation-model/{generation_model_id}"
             )
+            vector_search_config: dict = {"numberOfResults": num_results}
+            if use_filter and filter_key and filter_value:
+                vector_search_config["filter"] = {
+                    "equals": {"key": filter_key, "value": filter_value}
+                }
             response = bedrock_agent_runtime.retrieve_and_generate(
                 input={"text": query},
                 retrieveAndGenerateConfiguration={
@@ -63,9 +77,7 @@ if st.button("質問する", type="primary", disabled=not query):
                         "knowledgeBaseId": knowledge_base_id,
                         "modelArn": generation_model_arn,
                         "retrievalConfiguration": {
-                            "vectorSearchConfiguration": {
-                                "numberOfResults": num_results,
-                            }
+                            "vectorSearchConfiguration": vector_search_config,
                         },
                         "generationConfiguration": {
                             "promptTemplate": {

@@ -38,11 +38,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     try:
         body = json.loads(event.get("body", "{}"))
         query = body.get("query", "").strip()
+        num_results = int(body.get("num_results", 5))
 
         if not query:
             return _response(400, {"error": "query は必須です"})
 
-        answer, citations = _retrieve_and_generate(query)
+        answer, citations = _retrieve_and_generate(query, num_results)
 
         return _response(200, {
             "query": query,
@@ -55,7 +56,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return _response(500, {"error": "内部エラーが発生しました"})
 
 
-def _retrieve_and_generate(query: str) -> Tuple[str, List[Dict[str, str]]]:
+def _retrieve_and_generate(query: str, num_results: int = 5) -> Tuple[str, List[Dict[str, str]]]:
     """Bedrock Knowledge Bases の RetrieveAndGenerate API を呼び出す"""
     response = bedrock_agent_runtime.retrieve_and_generate(
         input={"text": query},
@@ -66,7 +67,7 @@ def _retrieve_and_generate(query: str) -> Tuple[str, List[Dict[str, str]]]:
                 "modelArn": GENERATION_MODEL_ARN,
                 "retrievalConfiguration": {
                     "vectorSearchConfiguration": {
-                        "numberOfResults": 5,
+                        "numberOfResults": num_results,
                     }
                 },
                 "generationConfiguration": {

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-26
+
+### Added
+- `app.py`: サイドバーにメタデータフィルター UI 追加（キー・値のイコールフィルター）
+- `lambda/query_handler.py`: リクエスト body から `num_results` を受け取れるよう対応（デフォルト: 5）
+
+### Fixed
+- `app.py`: `region_name` ハードコードを `AWS_DEFAULT_REGION` 環境変数参照に修正
+
 ## [1.1.0] - 2026-05-19
 
 ### Added
