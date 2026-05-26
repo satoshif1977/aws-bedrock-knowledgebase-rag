@@ -1,0 +1,36 @@
+# 社内ナレッジベース サンプルドキュメント
+
+## AWS Bedrock について
+Amazon Bedrock は、AWS が提供するフルマネージドの生成 AI サービスです。
+Claude、Titan、Llama などの基盤モデルを API 経由で利用できます。
+インフラ管理不要で、すぐに生成 AI を業務に組み込めます。
+
+## RAG（Retrieval Augmented Generation）とは
+RAG は、大規模言語モデルに外部の知識ベースを組み合わせて
+より正確な回答を生成する手法です。
+モデルが学習していない社内情報や最新情報にも対応できます。
+
+## Amazon Bedrock Knowledge Bases の使い方
+1. S3 にドキュメント（PDF・テキスト等）をアップロードする
+2. データソースの同期（Ingestion）を実行してインデックスを作成する
+3. API 経由でセマンティック検索ができるようになる
+4. Bedrock の基盤モデルが検索結果をもとに回答を生成する
+
+## OpenSearch Serverless について
+Amazon OpenSearch Serverless はサーバー管理不要のベクトルデータベースです。
+Bedrock Knowledge Bases のバックエンドとして使用することで
+セマンティック検索（意味検索）が可能になります。
+
+## よくある質問
+Q: Bedrock の料金は？
+A: 使用したトークン数に応じた従量課金制です。Claude 3 Haiku は低コストで高速です。
+
+Q: 対応しているドキュメント形式は？
+A: PDF、テキスト、Word、HTML、Markdown など多数の形式に対応しています。
+
+Q: 日本語は使えますか？
+A: はい、Titan Embed Text v2 は日本語のセマンティック検索に対応しています。
+
+Q: RAG と通常のチャットの違いは？
+A: 通常のチャットはモデルの学習データのみで回答しますが、
+RAG は社内ドキュメントを参照して回答するため、より正確で最新の情報を提供できます。

@@ -45,7 +45,7 @@ Amazon Bedrock Knowledge Bases
     └─▶ Amazon S3（ドキュメントストア）
     │
     ▼
-Claude 3 Haiku（回答生成）
+Claude 3.5 Haiku（回答生成）
 ```
 
 **補足:** API Gateway + Lambda 経由でも同じ RAG クエリを実行可能。
@@ -57,7 +57,7 @@ Claude 3 Haiku（回答生成）
 | Amazon Bedrock Knowledge Bases | RAG パイプライン統括（検索＋生成） |
 | OpenSearch Serverless (VECTORSEARCH) | ベクトルインデックスのホスティング |
 | Amazon Titan Embed Text v2 | テキスト → 1024次元ベクトル変換 |
-| Claude 3 Haiku | セマンティック検索結果をもとに日本語回答生成 |
+| Claude 3.5 Haiku | セマンティック検索結果をもとに日本語回答生成 |
 | Amazon S3 | Knowledge Base のドキュメントソース |
 | AWS Lambda + API Gateway | RAG クエリ用 REST API |
 | Streamlit | Web UI |
@@ -182,7 +182,7 @@ aws-vault exec <プロファイル名> -- streamlit run app.py
 |---|---|---|
 | OpenSearch Serverless | OCU 時間課金（最低 2 OCU） | **約 $0.24/時間** |
 | Bedrock（Titan Embed） | トークン課金 | 微小 |
-| Bedrock（Claude 3 Haiku） | トークン課金 | 微小 |
+| Bedrock（Claude 3.5 Haiku） | トークン課金 | 微小 |
 | Lambda + API Gateway | リクエスト課金 | 微小 |
 
 > **注意:** OpenSearch Serverless は起動しているだけで課金されます。演習後は必ず `terraform destroy` を実行してください。

@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-05-26
+
+### Added
+- `.gitignore` に draw.io バックアップ（`.*.bkp`）パターンを追加
+- `knowledge_docs/sample.txt` をリポジトリに追加
+- `docs/screenshots/demo.gif` をリポジトリに追加
+
+### Fixed
+- README のモデル名を `Claude 3 Haiku` → `Claude 3.5 Haiku` に統一（3か所）
+
 ## [1.2.0] - 2026-05-26
 
 ### Added
