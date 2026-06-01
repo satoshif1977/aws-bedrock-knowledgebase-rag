@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-01
+
+### Changed
+- hashicorp/aws provider を v5 から v6 にアップグレード（`terraform plan` で 0 changes/0 destroys 確認済み）
+- streamlit を >=1.57.0 に更新
+- GitHub Actions: `actions/setup-python` を v6 に更新、`hashicorp/setup-terraform` を v4 に更新
+
 ## [1.2.1] - 2026-05-26
 
 ### Added
