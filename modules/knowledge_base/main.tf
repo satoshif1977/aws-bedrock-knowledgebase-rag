@@ -144,10 +144,17 @@ resource "aws_bedrockagent_data_source" "s3" {
 
   vector_ingestion_configuration {
     chunking_configuration {
-      chunking_strategy = "FIXED_SIZE"
-      fixed_size_chunking_configuration {
-        max_tokens         = 300
-        overlap_percentage = 20
+      # HIERARCHICAL: 親チャンク（文脈）で検索・子チャンク（精度）で回答生成
+      # → FIXED_SIZE より RAG 精度が向上する（面談アピールポイント）
+      chunking_strategy = "HIERARCHICAL"
+      hierarchical_chunking_configuration {
+        level_configuration {
+          max_tokens = 1500 # 親チャンク: 広い文脈を保持
+        }
+        level_configuration {
+          max_tokens = 300 # 子チャンク: 精度の高い参照箇所
+        }
+        overlap_tokens = 60
       }
     }
   }

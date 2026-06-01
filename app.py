@@ -2,19 +2,10 @@
 Bedrock Knowledge Bases RAG - Streamlit Web UI
 起動: aws-vault exec personal-dev-source -- streamlit run app.py
 """
-import json
 import os
 
 import boto3
 import streamlit as st
-
-# ── Bedrock クライアント（キャッシュで再利用）──────────────────
-@st.cache_resource
-def get_bedrock_client():
-    return boto3.client(
-        "bedrock-agent-runtime",
-        region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-1"),
-    )
 
 # ── ページ設定 ───────────────────────────────────
 st.set_page_config(
@@ -22,6 +13,20 @@ st.set_page_config(
     page_icon="🔍",
     layout="wide",
 )
+
+# ── Bedrock クライアント（キャッシュで再利用）────────
+@st.cache_resource
+def get_bedrock_client():
+    return boto3.client(
+        "bedrock-agent-runtime",
+        region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-1"),
+    )
+
+# ── セッション状態の初期化 ───────────────────────
+if "session_id" not in st.session_state:
+    st.session_state.session_id = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 # ── サイドバー設定 ───────────────────────────────
 with st.sidebar:
@@ -40,6 +45,18 @@ with st.sidebar:
     )
     num_results = st.slider("検索件数", min_value=1, max_value=10, value=5)
     st.divider()
+
+    mode = st.radio(
+        "モード",
+        options=["RAG（回答生成）", "検索のみ（スコア表示）"],
+        index=0,
+        help=(
+            "RAG: 質問に対してモデルが回答を生成します（multi-turn 会話対応）。\n"
+            "検索のみ: 関連チャンクと信頼スコアを表示します（回答生成なし）。"
+        ),
+    )
+    st.divider()
+
     st.subheader("メタデータフィルター（オプション）")
     use_filter = st.checkbox("フィルターを使用する")
     filter_key = ""
@@ -47,6 +64,14 @@ with st.sidebar:
     if use_filter:
         filter_key = st.text_input("フィルターキー", placeholder="例: category")
         filter_value = st.text_input("フィルター値", placeholder="例: hr")
+    st.divider()
+
+    if st.button("🔄 会話をリセット", use_container_width=True):
+        st.session_state.session_id = None
+        st.session_state.messages = []
+        st.rerun()
+    if st.session_state.session_id:
+        st.caption(f"Session: `{st.session_state.session_id[:8]}...`")
     st.divider()
     st.caption("aws-bedrock-knowledgebase-rag PoC")
 
@@ -58,66 +83,121 @@ if not knowledge_base_id:
     st.warning("サイドバーで Knowledge Base ID を設定してください。")
     st.stop()
 
-# ── Bedrock クライアント（キャッシュ済みインスタンスを取得）──
 bedrock_agent_runtime = get_bedrock_client()
+aws_region = os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-1")
+generation_model_arn = f"arn:aws:bedrock:{aws_region}::foundation-model/{generation_model_id}"
+
+# ── 会話履歴の表示（RAG モードのみ） ────────────
+if st.session_state.messages:
+    st.subheader("会話履歴")
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+            if msg.get("citations"):
+                with st.expander(f"参照ドキュメント ({len(msg['citations'])} 件)"):
+                    for i, c in enumerate(msg["citations"], 1):
+                        st.markdown(f"**[{i}] {c['source']}**")
+                        preview = c["text"][:300] + "..." if len(c["text"]) > 300 else c["text"]
+                        st.caption(preview)
+                        st.divider()
+    st.divider()
 
 # ── クエリ入力 ───────────────────────────────────
 query = st.text_area("質問を入力してください", height=100, placeholder="例: 有給休暇の申請方法は？")
 
 if st.button("質問する", type="primary", disabled=not query):
-    with st.spinner("Bedrock Knowledge Bases で検索・回答生成中..."):
+    vector_search_config: dict = {"numberOfResults": num_results}
+    if use_filter and filter_key and filter_value:
+        vector_search_config["filter"] = {
+            "equals": {"key": filter_key, "value": filter_value}
+        }
+
+    with st.spinner("Bedrock Knowledge Bases で検索中..."):
         try:
-            aws_region = os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-1")
-            generation_model_arn = (
-                f"arn:aws:bedrock:{aws_region}::foundation-model/{generation_model_id}"
-            )
-            vector_search_config: dict = {"numberOfResults": num_results}
-            if use_filter and filter_key and filter_value:
-                vector_search_config["filter"] = {
-                    "equals": {"key": filter_key, "value": filter_value}
-                }
-            response = bedrock_agent_runtime.retrieve_and_generate(
-                input={"text": query},
-                retrieveAndGenerateConfiguration={
-                    "type": "KNOWLEDGE_BASE",
-                    "knowledgeBaseConfiguration": {
-                        "knowledgeBaseId": knowledge_base_id,
-                        "modelArn": generation_model_arn,
-                        "retrievalConfiguration": {
-                            "vectorSearchConfiguration": vector_search_config,
-                        },
-                        "generationConfiguration": {
-                            "promptTemplate": {
-                                "textPromptTemplate": (
-                                    "以下の参考情報をもとに、質問に対して日本語で丁寧に回答してください。\n"
-                                    "参考情報に記載がない場合は「資料に情報がありません」と答えてください。\n\n"
-                                    "$search_results$\n\n"
-                                    "質問: $query$"
-                                )
-                            }
+            if mode == "検索のみ（スコア表示）":
+                # ── Retrieve モード: スコア付き検索結果 ──
+                response = bedrock_agent_runtime.retrieve(
+                    knowledgeBaseId=knowledge_base_id,
+                    retrievalQuery={"text": query},
+                    retrievalConfiguration={
+                        "vectorSearchConfiguration": vector_search_config,
+                    },
+                )
+                chunks = [
+                    {
+                        "text": r.get("content", {}).get("text", ""),
+                        "source": r.get("location", {}).get("s3Location", {}).get("uri", "不明"),
+                        "score": round(r.get("score", 0.0), 4),
+                    }
+                    for r in response.get("retrievalResults", [])
+                ]
+                st.subheader(f"検索結果（{len(chunks)} 件）")
+                for i, chunk in enumerate(chunks, 1):
+                    score_pct = chunk["score"] * 100
+                    with st.expander(
+                        f"[{i}]  スコア: {score_pct:.1f}%　 {chunk['source'].split('/')[-1]}"
+                    ):
+                        st.progress(chunk["score"], text=f"信頼スコア: {score_pct:.1f}%")
+                        st.caption(
+                            chunk["text"][:500] + "..." if len(chunk["text"]) > 500 else chunk["text"]
+                        )
+
+            else:
+                # ── RAG モード: multi-turn 会話 ──────────
+                params: dict = {
+                    "input": {"text": query},
+                    "retrieveAndGenerateConfiguration": {
+                        "type": "KNOWLEDGE_BASE",
+                        "knowledgeBaseConfiguration": {
+                            "knowledgeBaseId": knowledge_base_id,
+                            "modelArn": generation_model_arn,
+                            "retrievalConfiguration": {
+                                "vectorSearchConfiguration": vector_search_config,
+                            },
+                            "generationConfiguration": {
+                                "promptTemplate": {
+                                    "textPromptTemplate": (
+                                        "以下の参考情報をもとに、質問に対して日本語で丁寧に回答してください。\n"
+                                        "参考情報に記載がない場合は「資料に情報がありません」と答えてください。\n\n"
+                                        "$search_results$\n\n"
+                                        "質問: $query$"
+                                    )
+                                }
+                            },
                         },
                     },
-                },
-            )
+                }
+                if st.session_state.session_id:
+                    params["sessionId"] = st.session_state.session_id  # 会話継続
 
-            answer = response["output"]["text"]
-            citations = response.get("citations", [])
+                response = bedrock_agent_runtime.retrieve_and_generate(**params)
+                answer = response["output"]["text"]
+                st.session_state.session_id = response.get("sessionId")
+                citations = [
+                    {
+                        "text": ref.get("content", {}).get("text", ""),
+                        "source": ref.get("location", {}).get("s3Location", {}).get("uri", "不明"),
+                    }
+                    for citation in response.get("citations", [])
+                    for ref in citation.get("retrievedReferences", [])
+                ]
 
-            st.success("回答")
-            st.write(answer)
+                # 会話履歴に追加
+                st.session_state.messages.append({"role": "user", "content": query})
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "citations": citations,
+                })
 
-            if citations:
-                with st.expander(f"参照ドキュメント ({len(citations)} 件)"):
-                    for i, citation in enumerate(citations, 1):
-                        for ref in citation.get("retrievedReferences", []):
-                            source = (
-                                ref.get("location", {})
-                                .get("s3Location", {})
-                                .get("uri", "不明")
-                            )
-                            text = ref.get("content", {}).get("text", "")
-                            st.markdown(f"**[{i}] {source}**")
-                            st.caption(text[:300] + "..." if len(text) > 300 else text)
+                st.success("回答")
+                st.write(answer)
+                if citations:
+                    with st.expander(f"参照ドキュメント ({len(citations)} 件)"):
+                        for i, c in enumerate(citations, 1):
+                            st.markdown(f"**[{i}] {c['source']}**")
+                            preview = c["text"][:300] + "..." if len(c["text"]) > 300 else c["text"]
+                            st.caption(preview)
                             st.divider()
 
         except Exception as e:

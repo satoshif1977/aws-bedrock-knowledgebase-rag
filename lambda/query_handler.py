@@ -1,11 +1,12 @@
 """
 Bedrock Knowledge Bases RAG クエリハンドラー
-RetrieveAndGenerate API を使用してドキュメントから回答を生成する
+- mode=rag    : RetrieveAndGenerate API（sessionId による multi-turn 会話対応）
+- mode=retrieve: Retrieve API（スコア付き検索結果のみ返す・生成なし）
 """
 import json
 import logging
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
 
@@ -40,18 +41,26 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         body = json.loads(raw_body) if raw_body else {}
         query = body.get("query", "").strip()
         num_results = int(body.get("num_results", 5))
+        session_id: Optional[str] = body.get("session_id") or None
+        mode = body.get("mode", "rag")
 
         if not query:
             return _response(400, {"error": "query は必須です"})
         if not (1 <= num_results <= 20):
             return _response(400, {"error": "num_results は 1〜20 の範囲で指定してください"})
+        if mode not in ("rag", "retrieve"):
+            return _response(400, {"error": "mode は 'rag' または 'retrieve' を指定してください"})
 
-        answer, citations = _retrieve_and_generate(query, num_results)
+        if mode == "retrieve":
+            chunks = _retrieve(query, num_results)
+            return _response(200, {"query": query, "chunks": chunks})
 
+        answer, citations, new_session_id = _retrieve_and_generate(query, num_results, session_id)
         return _response(200, {
             "query": query,
             "answer": answer,
             "citations": citations,
+            "session_id": new_session_id,
         })
 
     except Exception as e:
@@ -59,11 +68,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return _response(500, {"error": "内部エラーが発生しました"})
 
 
-def _retrieve_and_generate(query: str, num_results: int = 5) -> Tuple[str, List[Dict[str, str]]]:
-    """Bedrock Knowledge Bases の RetrieveAndGenerate API を呼び出す"""
-    response = bedrock_agent_runtime.retrieve_and_generate(
-        input={"text": query},
-        retrieveAndGenerateConfiguration={
+def _retrieve_and_generate(
+    query: str,
+    num_results: int = 5,
+    session_id: Optional[str] = None,
+) -> Tuple[str, List[Dict[str, str]], str]:
+    """RetrieveAndGenerate API を呼び出す（sessionId を渡すと会話が継続される）"""
+    params: Dict[str, Any] = {
+        "input": {"text": query},
+        "retrieveAndGenerateConfiguration": {
             "type": "KNOWLEDGE_BASE",
             "knowledgeBaseConfiguration": {
                 "knowledgeBaseId": KNOWLEDGE_BASE_ID,
@@ -85,9 +98,14 @@ def _retrieve_and_generate(query: str, num_results: int = 5) -> Tuple[str, List[
                 },
             },
         },
-    )
+    }
+    if session_id:
+        params["sessionId"] = session_id  # 同じセッションに紐付けて会話を継続
+
+    response = bedrock_agent_runtime.retrieve_and_generate(**params)
 
     answer = response["output"]["text"]
+    new_session_id = response.get("sessionId", "")
     citations = [
         {
             "text": ref.get("content", {}).get("text", ""),
@@ -97,7 +115,28 @@ def _retrieve_and_generate(query: str, num_results: int = 5) -> Tuple[str, List[
         for ref in citation.get("retrievedReferences", [])
     ]
 
-    return answer, citations
+    return answer, citations, new_session_id
+
+
+def _retrieve(query: str, num_results: int = 5) -> List[Dict[str, Any]]:
+    """Retrieve API でスコア付き検索結果を返す（回答生成なし・デバッグ・精度確認用）"""
+    response = bedrock_agent_runtime.retrieve(
+        knowledgeBaseId=KNOWLEDGE_BASE_ID,
+        retrievalQuery={"text": query},
+        retrievalConfiguration={
+            "vectorSearchConfiguration": {
+                "numberOfResults": num_results,
+            }
+        },
+    )
+    return [
+        {
+            "text": r.get("content", {}).get("text", ""),
+            "source": r.get("location", {}).get("s3Location", {}).get("uri", ""),
+            "score": round(r.get("score", 0.0), 4),
+        }
+        for r in response.get("retrievalResults", [])
+    ]
 
 
 def _response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:

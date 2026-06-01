@@ -100,3 +100,43 @@ class TestLambdaHandler:
         event = {"body": None}
         result = lambda_handler(event, MagicMock())
         assert result["statusCode"] == 400
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_session_idが引き継がれる(self, mock_bedrock):  # ③ multi-turn 会話
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "継続回答です"},
+            "citations": [],
+            "sessionId": "session-abc-123",
+        }
+        event = {"body": json.dumps({"query": "続けて教えて", "session_id": "session-abc-123"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body["session_id"] == "session-abc-123"
+        # sessionId が API 呼び出しに渡されているか確認
+        call_kwargs = mock_bedrock.retrieve_and_generate.call_args.kwargs
+        assert call_kwargs.get("sessionId") == "session-abc-123"
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_retrieve_モードでスコア付き結果を返す(self, mock_bedrock):  # ⑨ スコア表示
+        mock_bedrock.retrieve.return_value = {
+            "retrievalResults": [
+                {
+                    "content": {"text": "有給休暇は年10日です"},
+                    "location": {"s3Location": {"uri": "s3://bucket/hr.txt"}},
+                    "score": 0.9876,
+                }
+            ]
+        }
+        event = {"body": json.dumps({"query": "有給休暇", "mode": "retrieve"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert len(body["chunks"]) == 1
+        assert body["chunks"][0]["score"] == 0.9876
+        assert body["chunks"][0]["source"] == "s3://bucket/hr.txt"
+
+    def test_mode不正で400(self):
+        event = {"body": json.dumps({"query": "テスト", "mode": "invalid"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
