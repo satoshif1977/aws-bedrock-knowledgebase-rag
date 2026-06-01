@@ -1,9 +1,12 @@
 # ── Lambda + API Gateway モジュール ─────────────────────────────────────────
 
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
 locals {
   name_prefix          = "${var.project}-${var.environment}"
   lambda_function_name = "${local.name_prefix}-query-handler"
-  generation_model_arn = "arn:aws:bedrock:ap-northeast-1::foundation-model/${var.bedrock_generation_model_id}"
+  generation_model_arn = "arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/${var.bedrock_generation_model_id}"
 }
 
 # ── Lambda 実行ロール ────────────────────────────
@@ -27,21 +30,26 @@ resource "aws_iam_role_policy" "lambda" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      # Knowledge Base 検索・回答生成（ARN を絞り込み）
       {
-        Sid    = "BedrockAccess"
+        Sid    = "BedrockKnowledgeBase"
         Effect = "Allow"
         Action = [
-          "bedrock:RetrieveAndGenerate",
-          "bedrock:Retrieve",
-          "bedrock:InvokeModel",
+          "bedrock-agent-runtime:RetrieveAndGenerate",
+          "bedrock-agent-runtime:Retrieve",
         ]
-        Resource = "*"
+        Resource = [
+          "arn:aws:bedrock:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:knowledge-base/${var.knowledge_base_id}"
+        ]
       },
+      # 生成モデル呼び出し（指定モデルのみ）
       {
-        Sid    = "BedrockAgentRuntime"
+        Sid    = "BedrockInvokeModel"
         Effect = "Allow"
-        Action = ["bedrock-agent-runtime:RetrieveAndGenerate"]
-        Resource = "*"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          "arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/${var.bedrock_generation_model_id}"
+        ]
       },
       {
         Sid    = "CloudWatchLogs"
@@ -51,7 +59,7 @@ resource "aws_iam_role_policy" "lambda" {
           "logs:CreateLogStream",
           "logs:PutLogEvents",
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.lambda_function_name}:*"
       }
     ]
   })
@@ -60,7 +68,7 @@ resource "aws_iam_role_policy" "lambda" {
 # ── CloudWatch Logs ──────────────────────────────
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${local.lambda_function_name}"
-  retention_in_days = 3
+  retention_in_days = 7
 }
 
 # ── Lambda ZIP パッケージ ────────────────────────
@@ -85,6 +93,11 @@ resource "aws_lambda_function" "query_handler" {
       KNOWLEDGE_BASE_ID    = var.knowledge_base_id
       GENERATION_MODEL_ARN = local.generation_model_arn
     }
+  }
+
+  # X-Ray トレーシング（dev: PassThrough = 無料）
+  tracing_config {
+    mode = "PassThrough"
   }
 
   depends_on = [aws_cloudwatch_log_group.lambda]

@@ -25,5 +25,5 @@ variable "bedrock_embedding_model_id" {
 variable "bedrock_generation_model_id" {
   description = "回答生成モデルID"
   type        = string
-  default     = "anthropic.claude-3-5-haiku-20241022-v1:0"
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
 }

@@ -69,3 +69,34 @@ class TestLambdaHandler:
         mock_bedrock.retrieve_and_generate.side_effect = Exception("connection error")
         result = lambda_handler(self._make_event(), MagicMock())
         assert result["statusCode"] == 500
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_citations付き正常系(self, mock_bedrock):  # ⑮ citations が返る正常系
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "有給休暇は年10日付与されます"},
+            "citations": [
+                {
+                    "retrievedReferences": [
+                        {
+                            "content": {"text": "有給休暇規程 第3条..."},
+                            "location": {"s3Location": {"uri": "s3://bucket/hr-policy.txt"}},
+                        }
+                    ]
+                }
+            ],
+        }
+        result = lambda_handler(self._make_event("有給休暇の日数は？"), MagicMock())
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert len(body["citations"]) == 1
+        assert body["citations"][0]["source"] == "s3://bucket/hr-policy.txt"
+
+    def test_num_results範囲外で400(self):  # ⑯ num_results バリデーション
+        event = {"body": json.dumps({"query": "テスト", "num_results": 0})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    def test_bodyがNoneでも400を返す(self):  # ⑰ body が None のエッジケース
+        event = {"body": None}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400

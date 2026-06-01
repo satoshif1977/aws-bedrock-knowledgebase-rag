@@ -8,6 +8,14 @@ import os
 import boto3
 import streamlit as st
 
+# ── Bedrock クライアント（キャッシュで再利用）──────────────────
+@st.cache_resource
+def get_bedrock_client():
+    return boto3.client(
+        "bedrock-agent-runtime",
+        region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-1"),
+    )
+
 # ── ページ設定 ───────────────────────────────────
 st.set_page_config(
     page_title="Bedrock KB RAG",
@@ -25,8 +33,9 @@ with st.sidebar:
     generation_model_id = st.selectbox(
         "生成モデル",
         options=[
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
             "anthropic.claude-3-5-haiku-20241022-v1:0",
-            "anthropic.claude-3-sonnet-20240229-v1:0",
+            "anthropic.claude-3-5-sonnet-20241022-v2:0",
         ],
     )
     num_results = st.slider("検索件数", min_value=1, max_value=10, value=5)
@@ -49,11 +58,8 @@ if not knowledge_base_id:
     st.warning("サイドバーで Knowledge Base ID を設定してください。")
     st.stop()
 
-# ── Bedrock クライアント ─────────────────────────
-bedrock_agent_runtime = boto3.client(
-    "bedrock-agent-runtime",
-    region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-1"),
-)
+# ── Bedrock クライアント（キャッシュ済みインスタンスを取得）──
+bedrock_agent_runtime = get_bedrock_client()
 
 # ── クエリ入力 ───────────────────────────────────
 query = st.text_area("質問を入力してください", height=100, placeholder="例: 有給休暇の申請方法は？")
@@ -61,8 +67,9 @@ query = st.text_area("質問を入力してください", height=100, placeholde
 if st.button("質問する", type="primary", disabled=not query):
     with st.spinner("Bedrock Knowledge Bases で検索・回答生成中..."):
         try:
+            aws_region = os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-1")
             generation_model_arn = (
-                f"arn:aws:bedrock:ap-northeast-1::foundation-model/{generation_model_id}"
+                f"arn:aws:bedrock:{aws_region}::foundation-model/{generation_model_id}"
             )
             vector_search_config: dict = {"numberOfResults": num_results}
             if use_filter and filter_key and filter_value:

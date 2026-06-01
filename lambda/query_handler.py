@@ -36,12 +36,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     logger.info("event: %s", json.dumps(event))
 
     try:
-        body = json.loads(event.get("body", "{}"))
+        raw_body = event.get("body")
+        body = json.loads(raw_body) if raw_body else {}
         query = body.get("query", "").strip()
         num_results = int(body.get("num_results", 5))
 
         if not query:
             return _response(400, {"error": "query は必須です"})
+        if not (1 <= num_results <= 20):
+            return _response(400, {"error": "num_results は 1〜20 の範囲で指定してください"})
 
         answer, citations = _retrieve_and_generate(query, num_results)
 

@@ -26,6 +26,19 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "docs" {
   }
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "docs" {
+  bucket = aws_s3_bucket.docs.id
+
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "docs" {
   bucket                  = aws_s3_bucket.docs.id
   block_public_acls       = true
