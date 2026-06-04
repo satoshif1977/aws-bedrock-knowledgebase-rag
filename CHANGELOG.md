@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-04
+
+### Added
+- **メタデータフィルタリング強化**
+  - Lambda `query_handler.py`: `filter` パラメータを受け取り Bedrock KB API に渡す
+  - 対応演算子: `equals` / `notEquals` / `startsWith` / `greaterThanOrEquals` / `lessThanOrEquals` / `in` / `listContains` / `andAll` / `orAll`
+  - 不正な演算子名は 400 バリデーションエラーで返す
+  - Streamlit UI: 演算子ドロップダウンを追加（5種類から選択可能）
+- **ソース引用表示の改善**
+  - `_source_label()` ヘルパー: S3 URI から人間が読みやすいファイル名を抽出
+  - 引用・検索結果の表示を `s3://...` 生 URI → ファイル名に変更（フルパスはサブテキストで表示）
+  - `citations` / `chunks` に `metadata` フィールドを追加（chunk ID・data source ID 等）
+  - 検索結果 expander 内でメタデータキーを一覧表示
+  - RAG 引用 expander 内で `x-amz-bedrock-kb-chunk-id` を表示
+- **テスト追加**（4ケース）
+  - フィルター付き Retrieve で `filter` が API に渡ること
+  - フィルター付き RAG で `filter` が API に渡ること
+  - `citations` に `metadata` が含まれること
+  - 不正な `filter` キーで 400 を返すこと（合計 16 件）
+
 ## [1.3.0] - 2026-06-01
 
 ### Changed

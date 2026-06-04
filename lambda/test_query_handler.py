@@ -140,3 +140,79 @@ class TestLambdaHandler:
         event = {"body": json.dumps({"query": "テスト", "mode": "invalid"})}
         result = lambda_handler(event, MagicMock())
         assert result["statusCode"] == 400
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_フィルター付きretrieveでfilterがAPIに渡る(self, mock_bedrock):
+        """filter が Retrieve API の vectorSearchConfiguration に正しく渡されること"""
+        mock_bedrock.retrieve.return_value = {
+            "retrievalResults": [
+                {
+                    "content": {"text": "人事規程の内容"},
+                    "location": {"s3Location": {"uri": "s3://bucket/hr.txt"}},
+                    "score": 0.91,
+                    "metadata": {"x-amz-bedrock-kb-chunk-id": "chunk-001"},
+                }
+            ]
+        }
+        filter_expr = {"equals": {"key": "category", "value": "hr"}}
+        event = {"body": json.dumps({"query": "有給休暇", "mode": "retrieve", "filter": filter_expr})}
+        result = lambda_handler(event, MagicMock())
+
+        assert result["statusCode"] == 200
+        call_kwargs = mock_bedrock.retrieve.call_args.kwargs
+        vs_config = call_kwargs["retrievalConfiguration"]["vectorSearchConfiguration"]
+        assert vs_config["filter"] == filter_expr
+        body = json.loads(result["body"])
+        assert body["chunks"][0]["metadata"] == {"x-amz-bedrock-kb-chunk-id": "chunk-001"}
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_フィルター付きRAGでfilterがAPIに渡る(self, mock_bedrock):
+        """filter が RetrieveAndGenerate API の vectorSearchConfiguration に正しく渡されること"""
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "フィルター適用後の回答"},
+            "citations": [],
+        }
+        filter_expr = {"startsWith": {"key": "title", "value": "社内規程"}}
+        event = {"body": json.dumps({"query": "テスト", "filter": filter_expr})}
+        result = lambda_handler(event, MagicMock())
+
+        assert result["statusCode"] == 200
+        call_kwargs = mock_bedrock.retrieve_and_generate.call_args.kwargs
+        kb_config = call_kwargs["retrieveAndGenerateConfiguration"]["knowledgeBaseConfiguration"]
+        vs_config = kb_config["retrievalConfiguration"]["vectorSearchConfiguration"]
+        assert vs_config["filter"] == filter_expr
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_citationsにmetadataが含まれる(self, mock_bedrock):
+        """RetrieveAndGenerate のレスポンスから metadata が引用情報に含まれること"""
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "有給休暇の回答"},
+            "citations": [
+                {
+                    "retrievedReferences": [
+                        {
+                            "content": {"text": "有給休暇規程 第3条..."},
+                            "location": {"s3Location": {"uri": "s3://bucket/hr-policy.pdf"}},
+                            "metadata": {
+                                "x-amz-bedrock-kb-chunk-id": "chunk-abc",
+                                "x-amz-bedrock-kb-data-source-id": "ds-001",
+                            },
+                        }
+                    ]
+                }
+            ],
+        }
+        event = {"body": json.dumps({"query": "有給休暇の日数は？"})}
+        result = lambda_handler(event, MagicMock())
+
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        citation = body["citations"][0]
+        assert citation["source"] == "s3://bucket/hr-policy.pdf"
+        assert citation["metadata"]["x-amz-bedrock-kb-chunk-id"] == "chunk-abc"
+
+    def test_不正なfilterキーで400(self):
+        """サポート外の演算子名が filter に含まれる場合 400 を返すこと"""
+        event = {"body": json.dumps({"query": "テスト", "filter": {"unknownOp": {"key": "k", "value": "v"}}})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400

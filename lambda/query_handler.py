@@ -2,6 +2,12 @@
 Bedrock Knowledge Bases RAG クエリハンドラー
 - mode=rag    : RetrieveAndGenerate API（sessionId による multi-turn 会話対応）
 - mode=retrieve: Retrieve API（スコア付き検索結果のみ返す・生成なし）
+
+メタデータフィルター:
+  リクエスト body に "filter" キーで Bedrock KB フィルター式を渡す。
+  例: {"equals": {"key": "category", "value": "hr"}}
+  例: {"startsWith": {"key": "title", "value": "社内規程"}}
+  例: {"andAll": [{"equals": {...}}, {"greaterThanOrEquals": {...}}]}
 """
 import json
 import logging
@@ -31,6 +37,14 @@ def _require_env(key: str) -> str:
 KNOWLEDGE_BASE_ID = _require_env("KNOWLEDGE_BASE_ID")
 GENERATION_MODEL_ARN = _require_env("GENERATION_MODEL_ARN")
 
+# ── サポートする単項フィルター演算子 ──────────────
+_VALID_OPERATORS = frozenset({
+    "equals", "notEquals",
+    "greaterThan", "lessThan", "greaterThanOrEquals", "lessThanOrEquals",
+    "startsWith", "in", "notIn", "listContains",
+    "andAll", "orAll",
+})
+
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """API Gateway からのリクエストを処理して回答を返す"""
@@ -43,6 +57,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         num_results = int(body.get("num_results", 5))
         session_id: Optional[str] = body.get("session_id") or None
         mode = body.get("mode", "rag")
+        filter_expr: Optional[Dict[str, Any]] = body.get("filter") or None
 
         if not query:
             return _response(400, {"error": "query は必須です"})
@@ -50,12 +65,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             return _response(400, {"error": "num_results は 1〜20 の範囲で指定してください"})
         if mode not in ("rag", "retrieve"):
             return _response(400, {"error": "mode は 'rag' または 'retrieve' を指定してください"})
+        if filter_expr is not None and not _is_valid_filter(filter_expr):
+            return _response(400, {"error": f"filter のキーが不正です。使用可能: {sorted(_VALID_OPERATORS)}"})
 
         if mode == "retrieve":
-            chunks = _retrieve(query, num_results)
+            chunks = _retrieve(query, num_results, filter_expr)
             return _response(200, {"query": query, "chunks": chunks})
 
-        answer, citations, new_session_id = _retrieve_and_generate(query, num_results, session_id)
+        answer, citations, new_session_id = _retrieve_and_generate(query, num_results, session_id, filter_expr)
         return _response(200, {
             "query": query,
             "answer": answer,
@@ -68,12 +85,22 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return _response(500, {"error": "内部エラーが発生しました"})
 
 
+def _is_valid_filter(filter_expr: Dict[str, Any]) -> bool:
+    """フィルター式のトップレベルキーが既知の演算子かどうかを確認する"""
+    return bool(filter_expr) and all(k in _VALID_OPERATORS for k in filter_expr)
+
+
 def _retrieve_and_generate(
     query: str,
     num_results: int = 5,
     session_id: Optional[str] = None,
-) -> Tuple[str, List[Dict[str, str]], str]:
+    filter_expr: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, List[Dict[str, Any]], str]:
     """RetrieveAndGenerate API を呼び出す（sessionId を渡すと会話が継続される）"""
+    vector_search_config: Dict[str, Any] = {"numberOfResults": num_results}
+    if filter_expr:
+        vector_search_config["filter"] = filter_expr
+
     params: Dict[str, Any] = {
         "input": {"text": query},
         "retrieveAndGenerateConfiguration": {
@@ -82,9 +109,7 @@ def _retrieve_and_generate(
                 "knowledgeBaseId": KNOWLEDGE_BASE_ID,
                 "modelArn": GENERATION_MODEL_ARN,
                 "retrievalConfiguration": {
-                    "vectorSearchConfiguration": {
-                        "numberOfResults": num_results,
-                    }
+                    "vectorSearchConfiguration": vector_search_config,
                 },
                 "generationConfiguration": {
                     "promptTemplate": {
@@ -110,6 +135,7 @@ def _retrieve_and_generate(
         {
             "text": ref.get("content", {}).get("text", ""),
             "source": ref.get("location", {}).get("s3Location", {}).get("uri", ""),
+            "metadata": ref.get("metadata", {}),  # chunk ID・data source ID 等
         }
         for citation in response.get("citations", [])
         for ref in citation.get("retrievedReferences", [])
@@ -118,22 +144,27 @@ def _retrieve_and_generate(
     return answer, citations, new_session_id
 
 
-def _retrieve(query: str, num_results: int = 5) -> List[Dict[str, Any]]:
+def _retrieve(
+    query: str,
+    num_results: int = 5,
+    filter_expr: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     """Retrieve API でスコア付き検索結果を返す（回答生成なし・デバッグ・精度確認用）"""
+    vector_search_config: Dict[str, Any] = {"numberOfResults": num_results}
+    if filter_expr:
+        vector_search_config["filter"] = filter_expr
+
     response = bedrock_agent_runtime.retrieve(
         knowledgeBaseId=KNOWLEDGE_BASE_ID,
         retrievalQuery={"text": query},
-        retrievalConfiguration={
-            "vectorSearchConfiguration": {
-                "numberOfResults": num_results,
-            }
-        },
+        retrievalConfiguration={"vectorSearchConfiguration": vector_search_config},
     )
     return [
         {
             "text": r.get("content", {}).get("text", ""),
             "source": r.get("location", {}).get("s3Location", {}).get("uri", ""),
             "score": round(r.get("score", 0.0), 4),
+            "metadata": r.get("metadata", {}),  # chunk ID・data source ID 等
         }
         for r in response.get("retrievalResults", [])
     ]

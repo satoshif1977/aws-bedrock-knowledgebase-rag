@@ -3,9 +3,34 @@ Bedrock Knowledge Bases RAG - Streamlit Web UI
 起動: aws-vault exec personal-dev-source -- streamlit run app.py
 """
 import os
+from urllib.parse import urlparse
 
 import boto3
 import streamlit as st
+
+
+# ── ヘルパー ─────────────────────────────────────
+def _source_label(uri: str) -> str:
+    """S3 URI からファイル名を抽出して表示用ラベルを返す。
+    例: s3://bucket/docs/hr-policy.pdf → hr-policy.pdf
+    """
+    if not uri:
+        return "不明"
+    try:
+        path = urlparse(uri).path
+        return path.split("/")[-1] or uri
+    except Exception:
+        return uri
+
+
+# サポートする演算子と表示名のマッピング
+_FILTER_OPERATORS: dict[str, str] = {
+    "equals": "等しい (equals)",
+    "notEquals": "等しくない (notEquals)",
+    "startsWith": "で始まる (startsWith)",
+    "greaterThanOrEquals": "以上 (greaterThanOrEquals)",
+    "lessThanOrEquals": "以下 (lessThanOrEquals)",
+}
 
 # ── ページ設定 ───────────────────────────────────
 st.set_page_config(
@@ -60,9 +85,15 @@ with st.sidebar:
     st.subheader("メタデータフィルター（オプション）")
     use_filter = st.checkbox("フィルターを使用する")
     filter_key = ""
+    filter_operator = "equals"
     filter_value = ""
     if use_filter:
         filter_key = st.text_input("フィルターキー", placeholder="例: category")
+        filter_operator = st.selectbox(
+            "演算子",
+            options=list(_FILTER_OPERATORS.keys()),
+            format_func=lambda k: _FILTER_OPERATORS[k],
+        )
         filter_value = st.text_input("フィルター値", placeholder="例: hr")
     st.divider()
 
@@ -96,7 +127,10 @@ if st.session_state.messages:
             if msg.get("citations"):
                 with st.expander(f"参照ドキュメント ({len(msg['citations'])} 件)"):
                     for i, c in enumerate(msg["citations"], 1):
-                        st.markdown(f"**[{i}] {c['source']}**")
+                        label = _source_label(c["source"])
+                        st.markdown(f"**[{i}] {label}**")
+                        if c["source"]:
+                            st.caption(f"　{c['source']}")
                         preview = c["text"][:300] + "..." if len(c["text"]) > 300 else c["text"]
                         st.caption(preview)
                         st.divider()
@@ -109,7 +143,7 @@ if st.button("質問する", type="primary", disabled=not query):
     vector_search_config: dict = {"numberOfResults": num_results}
     if use_filter and filter_key and filter_value:
         vector_search_config["filter"] = {
-            "equals": {"key": filter_key, "value": filter_value}
+            filter_operator: {"key": filter_key, "value": filter_value}
         }
 
     with st.spinner("Bedrock Knowledge Bases で検索中..."):
@@ -126,21 +160,31 @@ if st.button("質問する", type="primary", disabled=not query):
                 chunks = [
                     {
                         "text": r.get("content", {}).get("text", ""),
-                        "source": r.get("location", {}).get("s3Location", {}).get("uri", "不明"),
+                        "source": r.get("location", {}).get("s3Location", {}).get("uri", ""),
                         "score": round(r.get("score", 0.0), 4),
+                        "metadata": r.get("metadata", {}),
                     }
                     for r in response.get("retrievalResults", [])
                 ]
                 st.subheader(f"検索結果（{len(chunks)} 件）")
                 for i, chunk in enumerate(chunks, 1):
                     score_pct = chunk["score"] * 100
-                    with st.expander(
-                        f"[{i}]  スコア: {score_pct:.1f}%　 {chunk['source'].split('/')[-1]}"
-                    ):
+                    label = _source_label(chunk["source"])
+                    with st.expander(f"[{i}]  スコア: {score_pct:.1f}%　 {label}"):
                         st.progress(chunk["score"], text=f"信頼スコア: {score_pct:.1f}%")
                         st.caption(
                             chunk["text"][:500] + "..." if len(chunk["text"]) > 500 else chunk["text"]
                         )
+                        if chunk["metadata"]:
+                            st.divider()
+                            meta_items = {
+                                k: v for k, v in chunk["metadata"].items()
+                                if not k.startswith("x-amz-bedrock-kb-source")  # URI は source で表示済み
+                            }
+                            if meta_items:
+                                st.caption("**メタデータ**")
+                                for mk, mv in meta_items.items():
+                                    st.caption(f"　`{mk}`: {mv}")
 
             else:
                 # ── RAG モード: multi-turn 会話 ──────────
@@ -176,7 +220,8 @@ if st.button("質問する", type="primary", disabled=not query):
                 citations = [
                     {
                         "text": ref.get("content", {}).get("text", ""),
-                        "source": ref.get("location", {}).get("s3Location", {}).get("uri", "不明"),
+                        "source": ref.get("location", {}).get("s3Location", {}).get("uri", ""),
+                        "metadata": ref.get("metadata", {}),
                     }
                     for citation in response.get("citations", [])
                     for ref in citation.get("retrievedReferences", [])
@@ -195,9 +240,16 @@ if st.button("質問する", type="primary", disabled=not query):
                 if citations:
                     with st.expander(f"参照ドキュメント ({len(citations)} 件)"):
                         for i, c in enumerate(citations, 1):
-                            st.markdown(f"**[{i}] {c['source']}**")
+                            label = _source_label(c["source"])
+                            st.markdown(f"**[{i}] {label}**")
+                            if c["source"]:
+                                st.caption(f"　{c['source']}")
                             preview = c["text"][:300] + "..." if len(c["text"]) > 300 else c["text"]
                             st.caption(preview)
+                            if c.get("metadata"):
+                                chunk_id = c["metadata"].get("x-amz-bedrock-kb-chunk-id", "")
+                                if chunk_id:
+                                    st.caption(f"　chunk: `{chunk_id}`")
                             st.divider()
 
         except Exception as e:
