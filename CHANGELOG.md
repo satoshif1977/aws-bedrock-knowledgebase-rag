@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-06-16
+
+### Changed
+- boto3 >=1.43.18 -> >=1.43.29
+- streamlit >=1.57.0 -> >=1.58.0
+
 ## [1.4.0] - 2026-06-04
 
 ### Added
