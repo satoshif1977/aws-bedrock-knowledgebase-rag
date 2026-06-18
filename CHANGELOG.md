@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-18
+
+### Changed
+- `ci.yml`: `terraform_version` を `~1.6` → `~1.9` に更新（他リポジトリと統一）
+
 ## [1.5.0] - 2026-06-16
 
 ### Changed
