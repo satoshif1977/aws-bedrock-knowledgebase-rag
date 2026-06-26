@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-06-26
+
+### Added
+- **Go Lambda 並置版** (`lambda_go/query_handler/`)
+  - Python 版 `lambda/query_handler.py` を Go で再実装
+  - Bedrock Agent Runtime SDK（RetrieveAndGenerate / Retrieve）使用
+  - `rag` / `retrieve` モード対応
+  - フィルター演算子バリデーション（12種）
+  - ユニットテスト 20 件（`main_test.go`）
+- **TypeScript クライアントユーティリティ** (`client_ts/`)
+  - Python/Go 版と対応する型定義（`types.ts`）
+  - バリデーション・正規化・レスポンス加工ユーティリティ（`rag-client.ts`）
+  - Jest テスト 49 件（`rag-client.test.ts`）、全件 PASS
+- **CI ワークフロー追加**
+  - `go-test.yml`: Go ユニットテスト CI
+  - `ts-test.yml`: TypeScript Jest テスト CI（typecheck 込み）
+- **README 更新**
+  - Go / TypeScript バッジ追加
+  - 3 言語比較表・言語並置ディレクトリ構成を追記
+
 ## [1.6.0] - 2026-06-18
 
 ### Changed

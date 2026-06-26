@@ -1,8 +1,12 @@
 # aws-bedrock-knowledgebase-rag
 
 ![CI](https://github.com/satoshif1977/aws-bedrock-knowledgebase-rag/actions/workflows/ci.yml/badge.svg)
+![Go Test](https://github.com/satoshif1977/aws-bedrock-knowledgebase-rag/actions/workflows/go-test.yml/badge.svg)
+![TypeScript Test](https://github.com/satoshif1977/aws-bedrock-knowledgebase-rag/actions/workflows/ts-test.yml/badge.svg)
 ![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat&logo=amazon-aws&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![Go](https://img.shields.io/badge/Go-00ADD8?style=flat&logo=go&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
 ![Terraform](https://img.shields.io/badge/Terraform-623CE4?style=flat&logo=terraform&logoColor=white)
 ![Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-orange?logo=anthropic)
 ![Claude Cowork](https://img.shields.io/badge/Daily%20Use-Claude%20Cowork-blueviolet?logo=anthropic)
@@ -72,6 +76,25 @@ Claude 3.5 Haiku（回答生成）
 | 検索精度 | キーワードマッチ | セマンティック検索 |
 | コード量 | 多い | 少ない（マネージドサービス活用） |
 
+## 言語並置実装（Python / Go / TypeScript）
+
+同一の RAG クエリロジックを 3 言語で実装しています。
+
+| 言語 | ファイル | 役割 | テスト |
+|---|---|---|---|
+| Python | `lambda/query_handler.py` | Lambda 本体（デプロイ済み） | `lambda/test_query_handler.py` |
+| Go | `lambda_go/query_handler/main.go` | Go 並置版 Lambda | `main_test.go`（20件） |
+| TypeScript | `client_ts/rag-client.ts` | クライアントユーティリティ | `rag-client.test.ts`（49件） |
+
+### Python / Go / TypeScript 比較
+
+| 比較点 | Python | Go | TypeScript |
+|---|---|---|---|
+| コールドスタート | 普通 | 高速（バイナリ実行） | 普通 |
+| 型安全性 | 型ヒントで対応 | 構造体で厳密 | 型定義ファイルで厳密 |
+| テスト | pytest | go test | Jest + ts-jest |
+| バリデーション | 関数で実装 | 関数で実装 | ValidationResult 型で統一 |
+
 ## ディレクトリ構成
 
 ```
@@ -81,7 +104,19 @@ aws-bedrock-knowledgebase-rag/
 ├── docs/
 │   └── sample-hr-faq.txt    # テスト用 FAQ ドキュメント
 ├── lambda/
-│   └── query_handler.py     # Lambda 関数（RAG クエリ）
+│   ├── query_handler.py     # Lambda 関数（RAG クエリ・Python）
+│   └── test_query_handler.py
+├── lambda_go/
+│   └── query_handler/
+│       ├── main.go          # Go 並置版 Lambda
+│       ├── main_test.go     # Go ユニットテスト（20件）
+│       └── go.mod
+├── client_ts/
+│   ├── types.ts             # TypeScript 型定義
+│   ├── rag-client.ts        # クライアントユーティリティ
+│   ├── rag-client.test.ts   # Jest テスト（49件）
+│   ├── package.json
+│   └── tsconfig.json
 ├── environments/
 │   └── dev/
 │       ├── main.tf          # ルート設定（モジュール呼び出し）

@@ -1,0 +1,34 @@
+name: TypeScript Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "client_ts/**"
+      - ".github/workflows/ts-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "client_ts/**"
+      - ".github/workflows/ts-test.yml"
+
+jobs:
+  ts-test:
+    name: TypeScript ユニットテスト
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client_ts
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: client_ts/package-lock.json
+      - name: npm ci
+        run: npm ci
+      - name: typecheck
+        run: npm run typecheck
+      - name: jest
+        run: npm test
