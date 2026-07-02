@@ -5,9 +5,8 @@ AWS 接続なしでレスポンス生成・ハンドラーを検証する
 
 import json
 import os
-from unittest.mock import MagicMock, patch
-
 import sys
+from unittest.mock import MagicMock, patch
 
 # モジュール読み込み前に環境変数を設定（module-level の os.environ アクセス対策）
 os.environ.setdefault("KNOWLEDGE_BASE_ID", "test-kb-id")
@@ -17,7 +16,7 @@ os.environ.setdefault(
 )
 
 sys.path.insert(0, os.path.dirname(__file__))
-from query_handler import lambda_handler, _response
+from query_handler import _is_valid_filter, _response, lambda_handler
 
 
 class TestResponse:
@@ -34,6 +33,35 @@ class TestResponse:
     def test_CORSヘッダーが含まれる(self):
         resp = _response(200, {})
         assert resp["headers"]["Access-Control-Allow-Origin"] == "*"
+
+    def test_500レスポンスの構造(self):
+        resp = _response(500, {"error": "内部エラー"})
+        assert resp["statusCode"] == 500
+        assert json.loads(resp["body"])["error"] == "内部エラー"
+
+    def test_日本語bodyがUTF8でシリアライズされる(self):
+        resp = _response(200, {"answer": "有給休暇は年10日です"})
+        body = json.loads(resp["body"])
+        assert body["answer"] == "有給休暇は年10日です"
+        # ensure_ascii=False なのでエスケープされていないこと
+        assert "有給休暇" in resp["body"]
+
+
+class TestIsValidFilter:
+    def test_equals演算子はTrue(self):
+        assert _is_valid_filter({"equals": {"key": "category", "value": "hr"}}) is True
+
+    def test_andAll演算子はTrue(self):
+        assert (
+            _is_valid_filter({"andAll": [{"equals": {"key": "k", "value": "v"}}]})
+            is True
+        )
+
+    def test_不正演算子はFalse(self):
+        assert _is_valid_filter({"unknownOp": {"key": "k", "value": "v"}}) is False
+
+    def test_空dictはFalse(self):
+        assert _is_valid_filter({}) is False
 
 
 class TestLambdaHandler:
@@ -79,7 +107,9 @@ class TestLambdaHandler:
                     "retrievedReferences": [
                         {
                             "content": {"text": "有給休暇規程 第3条..."},
-                            "location": {"s3Location": {"uri": "s3://bucket/hr-policy.txt"}},
+                            "location": {
+                                "s3Location": {"uri": "s3://bucket/hr-policy.txt"}
+                            },
                         }
                     ]
                 }
@@ -108,7 +138,11 @@ class TestLambdaHandler:
             "citations": [],
             "sessionId": "session-abc-123",
         }
-        event = {"body": json.dumps({"query": "続けて教えて", "session_id": "session-abc-123"})}
+        event = {
+            "body": json.dumps(
+                {"query": "続けて教えて", "session_id": "session-abc-123"}
+            )
+        }
         result = lambda_handler(event, MagicMock())
         assert result["statusCode"] == 200
         body = json.loads(result["body"])
@@ -155,7 +189,11 @@ class TestLambdaHandler:
             ]
         }
         filter_expr = {"equals": {"key": "category", "value": "hr"}}
-        event = {"body": json.dumps({"query": "有給休暇", "mode": "retrieve", "filter": filter_expr})}
+        event = {
+            "body": json.dumps(
+                {"query": "有給休暇", "mode": "retrieve", "filter": filter_expr}
+            )
+        }
         result = lambda_handler(event, MagicMock())
 
         assert result["statusCode"] == 200
@@ -163,7 +201,9 @@ class TestLambdaHandler:
         vs_config = call_kwargs["retrievalConfiguration"]["vectorSearchConfiguration"]
         assert vs_config["filter"] == filter_expr
         body = json.loads(result["body"])
-        assert body["chunks"][0]["metadata"] == {"x-amz-bedrock-kb-chunk-id": "chunk-001"}
+        assert body["chunks"][0]["metadata"] == {
+            "x-amz-bedrock-kb-chunk-id": "chunk-001"
+        }
 
     @patch("query_handler.bedrock_agent_runtime")
     def test_フィルター付きRAGでfilterがAPIに渡る(self, mock_bedrock):
@@ -178,7 +218,9 @@ class TestLambdaHandler:
 
         assert result["statusCode"] == 200
         call_kwargs = mock_bedrock.retrieve_and_generate.call_args.kwargs
-        kb_config = call_kwargs["retrieveAndGenerateConfiguration"]["knowledgeBaseConfiguration"]
+        kb_config = call_kwargs["retrieveAndGenerateConfiguration"][
+            "knowledgeBaseConfiguration"
+        ]
         vs_config = kb_config["retrievalConfiguration"]["vectorSearchConfiguration"]
         assert vs_config["filter"] == filter_expr
 
@@ -192,7 +234,9 @@ class TestLambdaHandler:
                     "retrievedReferences": [
                         {
                             "content": {"text": "有給休暇規程 第3条..."},
-                            "location": {"s3Location": {"uri": "s3://bucket/hr-policy.pdf"}},
+                            "location": {
+                                "s3Location": {"uri": "s3://bucket/hr-policy.pdf"}
+                            },
                             "metadata": {
                                 "x-amz-bedrock-kb-chunk-id": "chunk-abc",
                                 "x-amz-bedrock-kb-data-source-id": "ds-001",
@@ -213,6 +257,41 @@ class TestLambdaHandler:
 
     def test_不正なfilterキーで400(self):
         """サポート外の演算子名が filter に含まれる場合 400 を返すこと"""
-        event = {"body": json.dumps({"query": "テスト", "filter": {"unknownOp": {"key": "k", "value": "v"}}})}
+        event = {
+            "body": json.dumps(
+                {"query": "テスト", "filter": {"unknownOp": {"key": "k", "value": "v"}}}
+            )
+        }
         result = lambda_handler(event, MagicMock())
         assert result["statusCode"] == 400
+
+    def test_不正なJSONボディで500を返す(self):
+        event = {"body": "{ invalid json }"}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 500
+
+    def test_num_results最大値20はOK(self):
+        with patch("query_handler.bedrock_agent_runtime") as mock_bedrock:
+            mock_bedrock.retrieve_and_generate.return_value = {
+                "output": {"text": "回答"},
+                "citations": [],
+            }
+            event = {"body": json.dumps({"query": "テスト", "num_results": 20})}
+            result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+
+    def test_num_results上限超過で400(self):
+        event = {"body": json.dumps({"query": "テスト", "num_results": 21})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_retrieve_空結果で200を返す(self, mock_bedrock):
+        mock_bedrock.retrieve.return_value = {"retrievalResults": []}
+        event = {
+            "body": json.dumps({"query": "存在しないトピック", "mode": "retrieve"})
+        }
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body["chunks"] == []

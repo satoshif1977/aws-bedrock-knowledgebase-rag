@@ -32,13 +32,18 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_DEFAULT_REGION: ap-northeast-1
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: install deps
-        run: pip install pytest boto3 botocore
+        run: pip install pytest boto3 botocore ruff black
+      - name: ruff（構文チェック）
+        run: ruff check lambda/
+      - name: black（フォーマットチェック）
+        run: black --check lambda/
       - name: pytest
         run: pytest lambda/test_query_handler.py -v
 

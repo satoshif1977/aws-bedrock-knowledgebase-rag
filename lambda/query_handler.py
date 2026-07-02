@@ -9,10 +9,11 @@ Bedrock Knowledge Bases RAG クエリハンドラー
   例: {"startsWith": {"key": "title", "value": "社内規程"}}
   例: {"andAll": [{"equals": {...}}, {"greaterThanOrEquals": {...}}]}
 """
+
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import boto3
 
@@ -26,6 +27,7 @@ bedrock_agent_runtime = boto3.client(
     region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
 )
 
+
 # ── 環境変数（起動時バリデーション） ──────────────
 def _require_env(key: str) -> str:
     """必須環境変数を取得し、未設定の場合は起動時に RuntimeError を発生させる"""
@@ -34,19 +36,30 @@ def _require_env(key: str) -> str:
         raise RuntimeError(f"必須環境変数 {key!r} が設定されていません")
     return value
 
+
 KNOWLEDGE_BASE_ID = _require_env("KNOWLEDGE_BASE_ID")
 GENERATION_MODEL_ARN = _require_env("GENERATION_MODEL_ARN")
 
 # ── サポートする単項フィルター演算子 ──────────────
-_VALID_OPERATORS = frozenset({
-    "equals", "notEquals",
-    "greaterThan", "lessThan", "greaterThanOrEquals", "lessThanOrEquals",
-    "startsWith", "in", "notIn", "listContains",
-    "andAll", "orAll",
-})
+_VALID_OPERATORS = frozenset(
+    {
+        "equals",
+        "notEquals",
+        "greaterThan",
+        "lessThan",
+        "greaterThanOrEquals",
+        "lessThanOrEquals",
+        "startsWith",
+        "in",
+        "notIn",
+        "listContains",
+        "andAll",
+        "orAll",
+    }
+)
 
 
-def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """API Gateway からのリクエストを処理して回答を返す"""
     logger.info("event: %s", json.dumps(event))
 
@@ -55,37 +68,51 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         body = json.loads(raw_body) if raw_body else {}
         query = body.get("query", "").strip()
         num_results = int(body.get("num_results", 5))
-        session_id: Optional[str] = body.get("session_id") or None
+        session_id: str | None = body.get("session_id") or None
         mode = body.get("mode", "rag")
-        filter_expr: Optional[Dict[str, Any]] = body.get("filter") or None
+        filter_expr: dict[str, Any] | None = body.get("filter") or None
 
         if not query:
             return _response(400, {"error": "query は必須です"})
         if not (1 <= num_results <= 20):
-            return _response(400, {"error": "num_results は 1〜20 の範囲で指定してください"})
+            return _response(
+                400, {"error": "num_results は 1〜20 の範囲で指定してください"}
+            )
         if mode not in ("rag", "retrieve"):
-            return _response(400, {"error": "mode は 'rag' または 'retrieve' を指定してください"})
+            return _response(
+                400, {"error": "mode は 'rag' または 'retrieve' を指定してください"}
+            )
         if filter_expr is not None and not _is_valid_filter(filter_expr):
-            return _response(400, {"error": f"filter のキーが不正です。使用可能: {sorted(_VALID_OPERATORS)}"})
+            return _response(
+                400,
+                {
+                    "error": f"filter のキーが不正です。使用可能: {sorted(_VALID_OPERATORS)}"
+                },
+            )
 
         if mode == "retrieve":
             chunks = _retrieve(query, num_results, filter_expr)
             return _response(200, {"query": query, "chunks": chunks})
 
-        answer, citations, new_session_id = _retrieve_and_generate(query, num_results, session_id, filter_expr)
-        return _response(200, {
-            "query": query,
-            "answer": answer,
-            "citations": citations,
-            "session_id": new_session_id,
-        })
+        answer, citations, new_session_id = _retrieve_and_generate(
+            query, num_results, session_id, filter_expr
+        )
+        return _response(
+            200,
+            {
+                "query": query,
+                "answer": answer,
+                "citations": citations,
+                "session_id": new_session_id,
+            },
+        )
 
     except Exception as e:
         logger.exception("エラーが発生しました: %s", e)
         return _response(500, {"error": "内部エラーが発生しました"})
 
 
-def _is_valid_filter(filter_expr: Dict[str, Any]) -> bool:
+def _is_valid_filter(filter_expr: dict[str, Any]) -> bool:
     """フィルター式のトップレベルキーが既知の演算子かどうかを確認する"""
     return bool(filter_expr) and all(k in _VALID_OPERATORS for k in filter_expr)
 
@@ -93,15 +120,15 @@ def _is_valid_filter(filter_expr: Dict[str, Any]) -> bool:
 def _retrieve_and_generate(
     query: str,
     num_results: int = 5,
-    session_id: Optional[str] = None,
-    filter_expr: Optional[Dict[str, Any]] = None,
-) -> Tuple[str, List[Dict[str, Any]], str]:
+    session_id: str | None = None,
+    filter_expr: dict[str, Any] | None = None,
+) -> tuple[str, list[dict[str, Any]], str]:
     """RetrieveAndGenerate API を呼び出す（sessionId を渡すと会話が継続される）"""
-    vector_search_config: Dict[str, Any] = {"numberOfResults": num_results}
+    vector_search_config: dict[str, Any] = {"numberOfResults": num_results}
     if filter_expr:
         vector_search_config["filter"] = filter_expr
 
-    params: Dict[str, Any] = {
+    params: dict[str, Any] = {
         "input": {"text": query},
         "retrieveAndGenerateConfiguration": {
             "type": "KNOWLEDGE_BASE",
@@ -147,10 +174,10 @@ def _retrieve_and_generate(
 def _retrieve(
     query: str,
     num_results: int = 5,
-    filter_expr: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
+    filter_expr: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Retrieve API でスコア付き検索結果を返す（回答生成なし・デバッグ・精度確認用）"""
-    vector_search_config: Dict[str, Any] = {"numberOfResults": num_results}
+    vector_search_config: dict[str, Any] = {"numberOfResults": num_results}
     if filter_expr:
         vector_search_config["filter"] = filter_expr
 
@@ -170,7 +197,7 @@ def _retrieve(
     ]
 
 
-def _response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
+def _response(status_code: int, body: dict[str, Any]) -> dict[str, Any]:
     """API Gateway レスポンスを組み立てる"""
     return {
         "statusCode": status_code,
