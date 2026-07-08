@@ -68,7 +68,8 @@ class TestIsValidFilter:
 
     def test_orAll演算子はTrue(self):
         assert (
-            _is_valid_filter({"orAll": [{"equals": {"key": "k", "value": "v"}}]}) is True
+            _is_valid_filter({"orAll": [{"equals": {"key": "k", "value": "v"}}]})
+            is True
         )
 
     def test_in演算子はTrue(self):
@@ -78,7 +79,9 @@ class TestIsValidFilter:
         assert _is_valid_filter({"notIn": {"key": "tag", "value": ["x"]}}) is True
 
     def test_listContains演算子はTrue(self):
-        assert _is_valid_filter({"listContains": {"key": "tags", "value": "hr"}}) is True
+        assert (
+            _is_valid_filter({"listContains": {"key": "tags", "value": "hr"}}) is True
+        )
 
     def test_startsWith演算子はTrue(self):
         assert (
@@ -86,9 +89,7 @@ class TestIsValidFilter:
         )
 
     def test_greaterThan演算子はTrue(self):
-        assert (
-            _is_valid_filter({"greaterThan": {"key": "year", "value": 2020}}) is True
-        )
+        assert _is_valid_filter({"greaterThan": {"key": "year", "value": 2020}}) is True
 
     def test_lessThan演算子はTrue(self):
         assert _is_valid_filter({"lessThan": {"key": "year", "value": 2030}}) is True
