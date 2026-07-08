@@ -63,6 +63,36 @@ class TestIsValidFilter:
     def test_空dictはFalse(self):
         assert _is_valid_filter({}) is False
 
+    def test_notEquals演算子はTrue(self):
+        assert _is_valid_filter({"notEquals": {"key": "type", "value": "x"}}) is True
+
+    def test_orAll演算子はTrue(self):
+        assert (
+            _is_valid_filter({"orAll": [{"equals": {"key": "k", "value": "v"}}]}) is True
+        )
+
+    def test_in演算子はTrue(self):
+        assert _is_valid_filter({"in": {"key": "tag", "value": ["a", "b"]}}) is True
+
+    def test_notIn演算子はTrue(self):
+        assert _is_valid_filter({"notIn": {"key": "tag", "value": ["x"]}}) is True
+
+    def test_listContains演算子はTrue(self):
+        assert _is_valid_filter({"listContains": {"key": "tags", "value": "hr"}}) is True
+
+    def test_startsWith演算子はTrue(self):
+        assert (
+            _is_valid_filter({"startsWith": {"key": "title", "value": "社内"}}) is True
+        )
+
+    def test_greaterThan演算子はTrue(self):
+        assert (
+            _is_valid_filter({"greaterThan": {"key": "year", "value": 2020}}) is True
+        )
+
+    def test_lessThan演算子はTrue(self):
+        assert _is_valid_filter({"lessThan": {"key": "year", "value": 2030}}) is True
+
 
 class TestLambdaHandler:
     def _make_event(self, query="テスト質問"):
@@ -295,3 +325,78 @@ class TestLambdaHandler:
         assert result["statusCode"] == 200
         body = json.loads(result["body"])
         assert body["chunks"] == []
+
+    def test_num_results最小値1はOK(self):
+        with patch("query_handler.bedrock_agent_runtime") as mock_bedrock:
+            mock_bedrock.retrieve_and_generate.return_value = {
+                "output": {"text": "回答"},
+                "citations": [],
+            }
+            event = {"body": json.dumps({"query": "テスト", "num_results": 1})}
+            result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+
+    def test_クエリ空白のみで400(self):
+        event = {"body": json.dumps({"query": "   "})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_retrieve複数チャンクを正しく返す(self, mock_bedrock):
+        mock_bedrock.retrieve.return_value = {
+            "retrievalResults": [
+                {
+                    "content": {"text": "チャンク1"},
+                    "location": {"s3Location": {"uri": "s3://bucket/a.txt"}},
+                    "score": 0.95,
+                },
+                {
+                    "content": {"text": "チャンク2"},
+                    "location": {"s3Location": {"uri": "s3://bucket/b.txt"}},
+                    "score": 0.85,
+                },
+            ]
+        }
+        event = {"body": json.dumps({"query": "テスト", "mode": "retrieve"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert len(body["chunks"]) == 2
+        assert body["chunks"][1]["source"] == "s3://bucket/b.txt"
+
+    def test_空filterはフィルターなしと同等で200(self):
+        # filter={} は `or None` でNoneに変換されるため検証をスキップして正常処理
+        with patch("query_handler.bedrock_agent_runtime") as mock_bedrock:
+            mock_bedrock.retrieve_and_generate.return_value = {
+                "output": {"text": "回答"},
+                "citations": [],
+            }
+            event = {"body": json.dumps({"query": "テスト", "filter": {}})}
+            result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_citations複数referenceを返す(self, mock_bedrock):
+        """1つの citation ブロックに複数の retrievedReference がある場合"""
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "複数引用回答"},
+            "citations": [
+                {
+                    "retrievedReferences": [
+                        {
+                            "content": {"text": "参照A"},
+                            "location": {"s3Location": {"uri": "s3://bucket/a.pdf"}},
+                        },
+                        {
+                            "content": {"text": "参照B"},
+                            "location": {"s3Location": {"uri": "s3://bucket/b.pdf"}},
+                        },
+                    ]
+                }
+            ],
+        }
+        result = lambda_handler(self._make_event("テスト"), MagicMock())
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert len(body["citations"]) == 2
+        assert body["citations"][1]["source"] == "s3://bucket/b.pdf"

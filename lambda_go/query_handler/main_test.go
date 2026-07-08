@@ -179,3 +179,109 @@ func TestHandler_InvalidFilter(t *testing.T) {
 		t.Errorf("StatusCode = %d, want 400", resp.StatusCode)
 	}
 }
+
+func TestHandler_EmptyBody_Returns400(t *testing.T) {
+	// 空文字列は JSON パース失敗 → 400
+	resp, _ := Handler(context.Background(), makeEvent(""))
+	if resp.StatusCode != 400 {
+		t.Errorf("StatusCode = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestHandler_NumResultsZero_DefaultApplied(t *testing.T) {
+	// num_results=0 は未指定扱い → デフォルト5に変換されバリデーション通過（400 にならない）
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","num_results":0}`))
+	if resp.StatusCode == 400 {
+		t.Error("num_results=0 は 400 ではなくデフォルト5に変換されるべき")
+	}
+}
+
+func TestHandler_NumResultsOne_Valid(t *testing.T) {
+	// num_results=1 は最小値としてバリデーション通過（400 にならない）
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","num_results":1}`))
+	if resp.StatusCode == 400 {
+		t.Errorf("num_results=1 は最小値としてバリデーション通過するべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_NumResultsTwenty_Valid(t *testing.T) {
+	// num_results=20 は最大値としてバリデーション通過（400 にならない）
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","num_results":20}`))
+	if resp.StatusCode == 400 {
+		t.Errorf("num_results=20 は最大値としてバリデーション通過するべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_ModeEmpty_DefaultRag(t *testing.T) {
+	// mode="" はデフォルト "rag" になりバリデーション通過（400 にならない）
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","mode":""}`))
+	if resp.StatusCode == 400 {
+		t.Error("mode='' はデフォルト rag に変換されバリデーション通過するべき")
+	}
+}
+
+func TestHandler_ModeRetrieve_Valid(t *testing.T) {
+	// mode="retrieve" はバリデーション通過（400 にならない）
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","mode":"retrieve"}`))
+	if resp.StatusCode == 400 {
+		t.Errorf("mode='retrieve' はバリデーション通過するべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_ValidFilter_Passes(t *testing.T) {
+	// 有効な filter はバリデーション通過（400 にならない）
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","filter":{"equals":{"key":"cat","value":"hr"}}}`))
+	if resp.StatusCode == 400 {
+		t.Error("有効なフィルターで 400 が返ってはいけない")
+	}
+}
+
+func TestApiResponse_500Status(t *testing.T) {
+	resp, err := apiResponse(500, map[string]string{"error": "内部エラー"})
+	if err != nil {
+		t.Fatalf("apiResponse エラー: %v", err)
+	}
+	if resp.StatusCode != 500 {
+		t.Errorf("StatusCode = %d, want 500", resp.StatusCode)
+	}
+	var got map[string]string
+	json.Unmarshal([]byte(resp.Body), &got)
+	if got["error"] != "内部エラー" {
+		t.Errorf("error = %q", got["error"])
+	}
+}
+
+func TestRAGResponseJSON_Serialization(t *testing.T) {
+	rag := RAGResponse{
+		Query:     "テスト質問",
+		Answer:    "テスト回答",
+		Citations: []Citation{{Text: "本文", Source: "s3://bucket/doc.txt"}},
+		SessionID: "session-xyz",
+	}
+	resp, err := apiResponse(200, rag)
+	if err != nil {
+		t.Fatalf("apiResponse エラー: %v", err)
+	}
+	var got RAGResponse
+	if err := json.Unmarshal([]byte(resp.Body), &got); err != nil {
+		t.Fatalf("Body 逆シリアライズ失敗: %v", err)
+	}
+	if got.Query != "テスト質問" {
+		t.Errorf("Query = %q, want テスト質問", got.Query)
+	}
+	if len(got.Citations) != 1 {
+		t.Errorf("Citations len = %d, want 1", len(got.Citations))
+	}
+	if got.SessionID != "session-xyz" {
+		t.Errorf("SessionID = %q, want session-xyz", got.SessionID)
+	}
+}
+
+func TestGetEnv_EmptyStringFallsBack(t *testing.T) {
+	// 環境変数が空文字列の場合も fallback を返す（getEnv は v != "" で判定）
+	t.Setenv("TEST_EMPTY_RAG_KEY", "")
+	got := getEnv("TEST_EMPTY_RAG_KEY", "default_value")
+	if got != "default_value" {
+		t.Errorf("getEnv with empty value = %q, want %q", got, "default_value")
+	}
+}
