@@ -285,3 +285,162 @@ func TestGetEnv_EmptyStringFallsBack(t *testing.T) {
 		t.Errorf("getEnv with empty value = %q, want %q", got, "default_value")
 	}
 }
+
+// ── isValidFilter 追加テスト ──────────────────────────────────
+
+func TestIsValidFilter_TableDrivenInvalidOps(t *testing.T) {
+	// 存在しない演算子はすべて false を返すこと
+	invalids := []string{"contains", "like", "between", "exists", "fuzzy", "regex"}
+	for _, op := range invalids {
+		t.Run(op, func(t *testing.T) {
+			filter := map[string]any{op: map[string]any{"key": "x", "value": "y"}}
+			if isValidFilter(filter) {
+				t.Errorf("isValidFilter with op=%q should return false", op)
+			}
+		})
+	}
+}
+
+// ── apiResponse / errResponse 追加テスト ─────────────────────
+
+func TestApiResponse_BodyNotEmpty(t *testing.T) {
+	resp, _ := apiResponse(200, map[string]string{"msg": "hello"})
+	if resp.Body == "" {
+		t.Error("apiResponse body should not be empty")
+	}
+}
+
+func TestApiResponse_CORSHeader_AllStatuses(t *testing.T) {
+	// 200/400/500 すべてで CORS ヘッダーが付くこと
+	for _, code := range []int{200, 400, 500} {
+		resp, err := apiResponse(code, map[string]string{})
+		if err != nil {
+			t.Fatalf("apiResponse(status=%d) error: %v", code, err)
+		}
+		if resp.Headers["Access-Control-Allow-Origin"] != "*" {
+			t.Errorf("status %d: CORS header missing or wrong", code)
+		}
+	}
+}
+
+func TestErrResponse_ErrorKeyExists(t *testing.T) {
+	// errResponse の body に "error" キーが存在すること
+	resp, _ := errResponse(400, "test error")
+	var got map[string]string
+	json.Unmarshal([]byte(resp.Body), &got)
+	if _, ok := got["error"]; !ok {
+		t.Error("errResponse body should have 'error' key")
+	}
+}
+
+// ── Handler 追加テスト ────────────────────────────────────────
+
+func TestHandler_ModeRag_Valid(t *testing.T) {
+	// mode="rag"（デフォルトモード）はバリデーション通過（400 にならない）
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","mode":"rag"}`))
+	if resp.StatusCode == 400 {
+		t.Error("mode='rag' should pass validation")
+	}
+}
+
+func TestHandler_TableDrivenInvalidModes(t *testing.T) {
+	// 不正な mode 文字列はすべて 400 を返すこと
+	cases := []struct {
+		mode string
+		body string
+	}{
+		{"hybrid", `{"query":"test","mode":"hybrid"}`},
+		{"semantic", `{"query":"test","mode":"semantic"}`},
+		{"RETRIEVE", `{"query":"test","mode":"RETRIEVE"}`},
+		{"RAG", `{"query":"test","mode":"RAG"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			resp, _ := Handler(context.Background(), makeEvent(tc.body))
+			if resp.StatusCode != 400 {
+				t.Errorf("mode=%q should return 400, got %d", tc.mode, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestHandler_400BodyContainsErrorKey(t *testing.T) {
+	// バリデーションエラー時のレスポンス body に "error" キーが含まれること
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":""}`))
+	if resp.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+	var got map[string]string
+	json.Unmarshal([]byte(resp.Body), &got)
+	if _, ok := got["error"]; !ok {
+		t.Error("400 response body should have 'error' key")
+	}
+}
+
+// ── RAGResponse / Citation 追加テスト ────────────────────────
+
+func TestRAGResponse_AnswerPreserved(t *testing.T) {
+	rag := RAGResponse{
+		Query:  "質問テキスト",
+		Answer: "詳細な回答テキスト",
+	}
+	resp, err := apiResponse(200, rag)
+	if err != nil {
+		t.Fatalf("apiResponse error: %v", err)
+	}
+	var got RAGResponse
+	json.Unmarshal([]byte(resp.Body), &got)
+	if got.Answer != "詳細な回答テキスト" {
+		t.Errorf("Answer = %q, want 詳細な回答テキスト", got.Answer)
+	}
+}
+
+func TestCitation_SourceAndText(t *testing.T) {
+	// Citation の Source / Text フィールドが正確に保存されること
+	rag := RAGResponse{
+		Query: "q",
+		Citations: []Citation{
+			{Text: "引用テキスト本文", Source: "s3://bucket/doc.pdf"},
+		},
+	}
+	resp, _ := apiResponse(200, rag)
+	var got RAGResponse
+	json.Unmarshal([]byte(resp.Body), &got)
+	if len(got.Citations) == 0 {
+		t.Fatal("expected 1 citation")
+	}
+	if got.Citations[0].Text != "引用テキスト本文" {
+		t.Errorf("Citation.Text = %q, want 引用テキスト本文", got.Citations[0].Text)
+	}
+	if got.Citations[0].Source != "s3://bucket/doc.pdf" {
+		t.Errorf("Citation.Source = %q, want s3://bucket/doc.pdf", got.Citations[0].Source)
+	}
+}
+
+// ── getEnv テーブル駆動 ───────────────────────────────────────
+
+func TestGetEnv_TableDriven(t *testing.T) {
+	cases := []struct {
+		name     string
+		envKey   string
+		envVal   string
+		setEnv   bool
+		fallback string
+		want     string
+	}{
+		{"no-env", "TD_KEY_NOSET_RAG", "", false, "default", "default"},
+		{"with-value", "TD_KEY_SET_RAG", "hello", true, "fallback", "hello"},
+		{"empty-value", "TD_KEY_EMPTY_RAG", "", true, "fallback", "fallback"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setEnv {
+				t.Setenv(tc.envKey, tc.envVal)
+			}
+			got := getEnv(tc.envKey, tc.fallback)
+			if got != tc.want {
+				t.Errorf("getEnv(%q) = %q, want %q", tc.envKey, got, tc.want)
+			}
+		})
+	}
+}
