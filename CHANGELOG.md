@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-07-10
+
+### Added
+- Python ユニットテスト 16 件 → 39 件に拡充（境界値・エラーメッセージ・複合パターン）
+- Go ユニットテスト 17 件 → 37 件に拡充（境界値・デフォルト動作・RAGResponse JSON 等）
+- ruff / black CI ワークフロー追加（`python-ci.yml`）
+
+### Fixed
+- `test_query_handler.py`: black フォーマット修正
+
+### Changed
+- Dependabot: `boto3` v1.43.36 → v1.43.40 更新・`actions/setup-node` v4 → v6 更新
+
 ## [1.7.0] - 2026-06-26
 
 ### Added
