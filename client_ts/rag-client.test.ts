@@ -322,3 +322,176 @@ describe("formatResponseSummary", () => {
     expect(formatResponseSummary(response)).toContain("session_id=abc-123");
   });
 });
+
+// ── 追加テスト（件数拡充） ─────────────────────────────────────────
+
+describe("validateQuery (詳細)", () => {
+  test("1文字のクエリは valid=true", () => {
+    expect(validateQuery("Q").valid).toBe(true);
+  });
+
+  test("改行のみは valid=false", () => {
+    expect(validateQuery("\n").valid).toBe(false);
+  });
+
+  test("日本語クエリは valid=true", () => {
+    expect(validateQuery("経費精算の締め日はいつですか？").valid).toBe(true);
+  });
+});
+
+describe("validateMode (詳細)", () => {
+  test("大文字 'RAG' は valid=false（case sensitive）", () => {
+    expect(validateMode("RAG").valid).toBe(false);
+  });
+
+  test("大文字混在 'Retrieve' は valid=false", () => {
+    expect(validateMode("Retrieve").valid).toBe(false);
+  });
+
+  test("'rag' は errors が空", () => {
+    expect(validateMode("rag").errors).toHaveLength(0);
+  });
+});
+
+describe("isValidFilter (詳細)", () => {
+  test("'startsWith' は true", () => {
+    expect(isValidFilter({ startsWith: { key: "title", value: "AWS" } })).toBe(true);
+  });
+
+  test("'greaterThan' は true", () => {
+    expect(isValidFilter({ greaterThan: { key: "score", value: 0.8 } })).toBe(true);
+  });
+
+  test("'lessThan' は true", () => {
+    expect(isValidFilter({ lessThan: { key: "year", value: 2024 } })).toBe(true);
+  });
+
+  test("有効+不正の演算子混在は false", () => {
+    expect(
+      isValidFilter({ equals: { key: "x", value: "y" }, badOp: {} } as any)
+    ).toBe(false);
+  });
+});
+
+describe("normalizeRequest (詳細)", () => {
+  test("mode='retrieve' はそのまま維持される", () => {
+    const req: QueryRequest = { query: "テスト", mode: "retrieve" };
+    expect(normalizeRequest(req).mode).toBe("retrieve");
+  });
+
+  test("sessionId が保持される", () => {
+    const req: QueryRequest = { query: "テスト", sessionId: "sess-abc" };
+    expect(normalizeRequest(req).sessionId).toBe("sess-abc");
+  });
+
+  test("filter が保持される", () => {
+    const filter = { equals: { key: "category", value: "hr" } };
+    const req: QueryRequest = { query: "テスト", filter };
+    expect(normalizeRequest(req).filter).toEqual(filter);
+  });
+
+  test("numResults=5（指定済み）はそのまま維持される", () => {
+    const req: QueryRequest = { query: "テスト", numResults: 5 };
+    expect(normalizeRequest(req).numResults).toBe(5);
+  });
+});
+
+describe("validateRequest (詳細)", () => {
+  test("numResults=21 は valid=false", () => {
+    expect(validateRequest({ query: "テスト", numResults: 21 }).valid).toBe(false);
+  });
+
+  test("query 空 + mode 不正で複数エラーが含まれる", () => {
+    const result = validateRequest({ query: "", mode: "bad" as any });
+    expect(result.errors.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("mode='retrieve' は valid=true", () => {
+    expect(validateRequest({ query: "テスト", mode: "retrieve" }).valid).toBe(true);
+  });
+
+  test("filter=null は valid=true（null は isValidFilter でスキップ）", () => {
+    expect(validateRequest({ query: "テスト", filter: null as any }).valid).toBe(true);
+  });
+});
+
+describe("extractAnswer (詳細)", () => {
+  test("長い回答はそのまま返す", () => {
+    const long = "回答".repeat(100);
+    const response: RAGResponse = { query: "q", answer: long };
+    expect(extractAnswer(response)).toBe(long);
+  });
+
+  test("answer が正しく trim される（前後空白のみでない場合は保持）", () => {
+    const response: RAGResponse = { query: "q", answer: "  回答あり  " };
+    expect(extractAnswer(response)).toBe("回答あり");
+  });
+});
+
+describe("extractSources (詳細)", () => {
+  test("単一 citation の source を返す", () => {
+    const sources = extractSources([{ text: "t", source: "s3://bucket/file.txt" }]);
+    expect(sources).toEqual(["s3://bucket/file.txt"]);
+  });
+
+  test("全 source が空文字なら空配列を返す", () => {
+    const citations: Citation[] = [
+      { text: "t1", source: "" },
+      { text: "t2", source: "" },
+    ];
+    expect(extractSources(citations)).toEqual([]);
+  });
+});
+
+describe("sortChunksByScore (詳細)", () => {
+  test("単一チャンクはそのまま返す", () => {
+    const chunks: Chunk[] = [{ text: "only", source: "s3://x", score: 0.8 }];
+    expect(sortChunksByScore(chunks)).toHaveLength(1);
+  });
+
+  test("既ソート済みはそのまま（順序が変わらない）", () => {
+    const chunks: Chunk[] = [
+      { text: "A", source: "s3://a", score: 0.9 },
+      { text: "B", source: "s3://b", score: 0.5 },
+    ];
+    const sorted = sortChunksByScore(chunks);
+    expect(sorted[0].score).toBe(0.9);
+    expect(sorted[1].score).toBe(0.5);
+  });
+
+  test("スコアが同じ場合も長さが変わらない", () => {
+    const chunks: Chunk[] = [
+      { text: "A", source: "s3://a", score: 0.7 },
+      { text: "B", source: "s3://b", score: 0.7 },
+    ];
+    expect(sortChunksByScore(chunks)).toHaveLength(2);
+  });
+});
+
+describe("formatResponseSummary (詳細)", () => {
+  test("optional フィールドなしなら query のみ含む", () => {
+    const response: RAGResponse = { query: "テスト質問" };
+    const summary = formatResponseSummary(response);
+    expect(summary).toContain('query="テスト質問"');
+    expect(summary).not.toContain("answer_len");
+    expect(summary).not.toContain("citations");
+  });
+
+  test("chunks が存在する場合 chunks 件数を含む", () => {
+    const response: RAGResponse = {
+      query: "q",
+      chunks: [
+        { text: "t1", source: "s3://a", score: 0.9 },
+        { text: "t2", source: "s3://b", score: 0.8 },
+      ],
+    };
+    expect(formatResponseSummary(response)).toContain("chunks=2");
+  });
+
+  test("answer_len の値が実際の文字列長と一致する", () => {
+    const answer = "回答テスト";
+    const response: RAGResponse = { query: "q", answer };
+    const summary = formatResponseSummary(response);
+    expect(summary).toContain(`answer_len=${answer.length}`);
+  });
+});
