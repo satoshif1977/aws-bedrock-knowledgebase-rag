@@ -374,3 +374,153 @@ func BenchmarkHandler_Validation(b *testing.B) {
 		Handler(ctx, event) //nolint:errcheck
 	}
 }
+
+// ── Handler 追加バリデーションテスト ─────────────────────────
+
+func TestHandler_NewlineOnlyQuery_Returns400(t *testing.T) {
+	// 改行のみの query は TrimSpace 後に空文字 → 400
+	resp, _ := Handler(context.Background(), makeEvent("{\"query\":\"\\n\\n\"}"))
+	if resp.StatusCode != 400 {
+		t.Errorf("改行のみ query は 400 を返すべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_CRLFOnlyQuery_Returns400(t *testing.T) {
+	// CRLF のみの query は TrimSpace 後に空文字 → 400
+	resp, _ := Handler(context.Background(), makeEvent("{\"query\":\"\\r\\n\"}"))
+	if resp.StatusCode != 400 {
+		t.Errorf("CRLF のみ query は 400 を返すべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_NumResultsMinus100_Returns400(t *testing.T) {
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","num_results":-100}`))
+	if resp.StatusCode != 400 {
+		t.Errorf("num_results=-100 は 400 を返すべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_NumResults100_Returns400(t *testing.T) {
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","num_results":100}`))
+	if resp.StatusCode != 400 {
+		t.Errorf("num_results=100 は 400 を返すべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_ModeRetrieveWithMaxResults_Valid(t *testing.T) {
+	// mode="retrieve" + num_results=20（最大値）はバリデーション通過
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","mode":"retrieve","num_results":20}`))
+	if resp.StatusCode == 400 {
+		t.Errorf("mode=retrieve + num_results=20 は pass するべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_LongSessionID_Valid(t *testing.T) {
+	// 100文字の session_id でもバリデーション通過
+	longSessionID := strings.Repeat("x", 100)
+	body, _ := json.Marshal(map[string]string{"query": "test", "session_id": longSessionID})
+	resp, _ := Handler(context.Background(), makeEvent(string(body)))
+	if resp.StatusCode == 400 {
+		t.Errorf("長い session_id は pass するべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_FilterNotIn_Valid(t *testing.T) {
+	// notIn 演算子はバリデーション通過
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","filter":{"notIn":{"key":"tag","value":["x","y"]}}}`))
+	if resp.StatusCode == 400 {
+		t.Errorf("notIn フィルターは pass するべき: got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_FilterStartsWith_Valid(t *testing.T) {
+	// startsWith 演算子はバリデーション通過
+	resp, _ := Handler(context.Background(), makeEvent(`{"query":"test","filter":{"startsWith":{"key":"title","value":"社内"}}}`))
+	if resp.StatusCode == 400 {
+		t.Errorf("startsWith フィルターは pass するべき: got %d", resp.StatusCode)
+	}
+}
+
+// ── Chunk / Citation metadata round-trip ─────────────────────
+
+func TestChunk_MetadataRoundTrip(t *testing.T) {
+	// Chunk の metadata フィールドがシリアライズ/デシリアライズで保持される
+	chunk := Chunk{
+		Text:     "本文",
+		Source:   "s3://bucket/file.pdf",
+		Score:    0.85,
+		Metadata: map[string]any{"category": "hr", "year": float64(2024)},
+	}
+	b, err := json.Marshal(chunk)
+	if err != nil {
+		t.Fatalf("Marshal error: %v", err)
+	}
+	var got Chunk
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+	if got.Metadata["category"] != "hr" {
+		t.Errorf("metadata[category] = %v, want hr", got.Metadata["category"])
+	}
+}
+
+func TestCitation_MetadataRoundTrip(t *testing.T) {
+	// Citation の metadata フィールドがシリアライズ/デシリアライズで保持される
+	c := Citation{
+		Text:     "引用テキスト",
+		Source:   "s3://bucket/doc.txt",
+		Metadata: map[string]any{"page": float64(3)},
+	}
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("Marshal error: %v", err)
+	}
+	var got Citation
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+	if got.Metadata["page"] != float64(3) {
+		t.Errorf("metadata[page] = %v, want 3", got.Metadata["page"])
+	}
+}
+
+// ── RAGResponse omitempty テスト ─────────────────────────────
+
+func TestRAGResponse_SessionIDOmitEmpty(t *testing.T) {
+	// SessionID が空のとき omitempty で JSON フィールドが省略される
+	rag := RAGResponse{Query: "q", Answer: "a"}
+	b, _ := json.Marshal(rag)
+	body := string(b)
+	if strings.Contains(body, "session_id") {
+		t.Error("SessionID が空のとき session_id フィールドは省略されるべき")
+	}
+}
+
+func TestRAGResponse_ChunksOmitEmpty(t *testing.T) {
+	// Chunks が nil/空のとき omitempty で JSON フィールドが省略される
+	rag := RAGResponse{Query: "q", Answer: "a"}
+	b, _ := json.Marshal(rag)
+	body := string(b)
+	if strings.Contains(body, "chunks") {
+		t.Error("Chunks が空のとき chunks フィールドは省略されるべき")
+	}
+}
+
+// ── errResponse CORS / getEnv スペース ───────────────────────
+
+func TestErrResponse_HasCORSHeader(t *testing.T) {
+	// errResponse にも CORS ヘッダーが付くこと
+	resp, _ := errResponse(422, "バリデーションエラー")
+	if resp.Headers["Access-Control-Allow-Origin"] != "*" {
+		t.Errorf("errResponse CORS header = %q, want *", resp.Headers["Access-Control-Allow-Origin"])
+	}
+}
+
+func TestGetEnv_SpaceValueNotFallback(t *testing.T) {
+	// スペース文字は空文字でないため fallback しない（getEnv の v != "" 判定）
+	t.Setenv("TEST_SPACE_RAG_KEY", " ")
+	got := getEnv("TEST_SPACE_RAG_KEY", "fallback")
+	if got != " " {
+		t.Errorf("スペース値は fallback しない: got %q, want \" \"", got)
+	}
+}
