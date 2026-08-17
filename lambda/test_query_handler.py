@@ -401,3 +401,259 @@ class TestLambdaHandler:
         body = json.loads(result["body"])
         assert len(body["citations"]) == 2
         assert body["citations"][1]["source"] == "s3://bucket/b.pdf"
+
+    # ── 追加バリデーションテスト（AWS 呼び出しなし） ─────────────
+
+    def test_クエリ改行のみで400(self):
+        event = {"body": json.dumps({"query": "\n\n"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    def test_クエリCRLFのみで400(self):
+        event = {"body": json.dumps({"query": "\r\n"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    def test_num_results負数で400(self):
+        event = {"body": json.dumps({"query": "テスト", "num_results": -1})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    def test_num_results文字列で500(self):
+        # int("abc") が ValueError → except → 500
+        event = {"body": json.dumps({"query": "テスト", "num_results": "abc"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 500
+
+    def test_mode大文字RAGで400(self):
+        event = {"body": json.dumps({"query": "テスト", "mode": "RAG"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    def test_mode大文字RETRIEVEで400(self):
+        event = {"body": json.dumps({"query": "テスト", "mode": "RETRIEVE"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    def test_400レスポンスにerrorキーが含まれる(self):
+        event = {"body": json.dumps({"query": ""})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+        body = json.loads(result["body"])
+        assert "error" in body
+
+    def test_filterがnullで正常処理(self):
+        # filter=null は None 扱いでバリデーションをスキップ
+        with patch("query_handler.bedrock_agent_runtime") as mock_bedrock:
+            mock_bedrock.retrieve_and_generate.return_value = {
+                "output": {"text": "回答"},
+                "citations": [],
+            }
+            event = {"body": json.dumps({"query": "テスト", "filter": None})}
+            result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+
+    def test_modeがhybridで400(self):
+        event = {"body": json.dumps({"query": "テスト", "mode": "hybrid"})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 400
+
+    # ── 正常系レスポンス詳細確認 ──────────────────────────────────
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_正常系レスポンスにqueryが含まれる(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答テキスト"},
+            "citations": [],
+        }
+        result = lambda_handler(self._make_event("社内規程について"), MagicMock())
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body["query"] == "社内規程について"
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_正常系レスポンスにContentTypeヘッダーが含まれる(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答"},
+            "citations": [],
+        }
+        result = lambda_handler(self._make_event(), MagicMock())
+        assert result["statusCode"] == 200
+        assert result["headers"]["Content-Type"] == "application/json"
+        assert result["headers"]["Access-Control-Allow-Origin"] == "*"
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_citations空の場合空リストが返る(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答"},
+            "citations": [],
+        }
+        result = lambda_handler(self._make_event(), MagicMock())
+        body = json.loads(result["body"])
+        assert body["citations"] == []
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_session_idなしで空文字が返る(self, mock_bedrock):
+        # sessionId が返らない場合 session_id は空文字
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答"},
+            "citations": [],
+            # sessionId キーなし
+        }
+        result = lambda_handler(self._make_event(), MagicMock())
+        body = json.loads(result["body"])
+        assert body["session_id"] == ""
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_retrieve_queryがレスポンスに含まれる(self, mock_bedrock):
+        mock_bedrock.retrieve.return_value = {"retrievalResults": []}
+        event = {"body": json.dumps({"query": "検索クエリ", "mode": "retrieve"})}
+        result = lambda_handler(event, MagicMock())
+        body = json.loads(result["body"])
+        assert body["query"] == "検索クエリ"
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_retrieve_scoreが4桁に丸められる(self, mock_bedrock):
+        mock_bedrock.retrieve.return_value = {
+            "retrievalResults": [
+                {
+                    "content": {"text": "本文"},
+                    "location": {"s3Location": {"uri": "s3://bucket/a.txt"}},
+                    "score": 0.987654321,
+                }
+            ]
+        }
+        event = {"body": json.dumps({"query": "テスト", "mode": "retrieve"})}
+        result = lambda_handler(event, MagicMock())
+        body = json.loads(result["body"])
+        assert body["chunks"][0]["score"] == round(0.987654321, 4)
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_retrieve_metadataがchunksに含まれる(self, mock_bedrock):
+        mock_bedrock.retrieve.return_value = {
+            "retrievalResults": [
+                {
+                    "content": {"text": "本文"},
+                    "location": {"s3Location": {"uri": "s3://bucket/a.txt"}},
+                    "score": 0.9,
+                    "metadata": {"x-amz-bedrock-kb-chunk-id": "chunk-001"},
+                }
+            ]
+        }
+        event = {"body": json.dumps({"query": "テスト", "mode": "retrieve"})}
+        result = lambda_handler(event, MagicMock())
+        body = json.loads(result["body"])
+        assert body["chunks"][0]["metadata"]["x-amz-bedrock-kb-chunk-id"] == "chunk-001"
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_andAllフィルターがAPIに渡る(self, mock_bedrock):
+        mock_bedrock.retrieve.return_value = {"retrievalResults": []}
+        filter_expr = {
+            "andAll": [
+                {"equals": {"key": "category", "value": "hr"}},
+                {"greaterThan": {"key": "year", "value": 2020}},
+            ]
+        }
+        event = {
+            "body": json.dumps(
+                {"query": "テスト", "mode": "retrieve", "filter": filter_expr}
+            )
+        }
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+        call_kwargs = mock_bedrock.retrieve.call_args.kwargs
+        vs_config = call_kwargs["retrievalConfiguration"]["vectorSearchConfiguration"]
+        assert vs_config["filter"] == filter_expr
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_rag_num_resultsがAPIに渡る(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答"},
+            "citations": [],
+        }
+        event = {"body": json.dumps({"query": "テスト", "num_results": 10})}
+        result = lambda_handler(event, MagicMock())
+        assert result["statusCode"] == 200
+        call_kwargs = mock_bedrock.retrieve_and_generate.call_args.kwargs
+        kb_cfg = call_kwargs["retrieveAndGenerateConfiguration"][
+            "knowledgeBaseConfiguration"
+        ]
+        vs_cfg = kb_cfg["retrievalConfiguration"]["vectorSearchConfiguration"]
+        assert vs_cfg["numberOfResults"] == 10
+
+
+class TestResponseExtra:
+    """_response ヘルパーの追加テスト"""
+
+    def test_404ステータスコード(self):
+        resp = _response(404, {"error": "not found"})
+        assert resp["statusCode"] == 404
+
+    def test_bodyがJSON文字列型(self):
+        resp = _response(200, {"answer": "ok"})
+        assert isinstance(resp["body"], str)
+        json.loads(resp["body"])  # パースできること
+
+    def test_全ステータスコードでContent_Typeがapplication_json(self):
+        for code in [200, 400, 404, 500]:
+            resp = _response(code, {})
+            assert (
+                resp["headers"]["Content-Type"] == "application/json"
+            ), f"status={code}"
+
+    def test_空dictのbodyがシリアライズされる(self):
+        resp = _response(200, {})
+        assert resp["body"] == "{}"
+
+    def test_422ステータスコード(self):
+        resp = _response(422, {"error": "validation failed"})
+        assert resp["statusCode"] == 422
+
+
+class TestIsValidFilterExtra:
+    """_is_valid_filter の追加テスト"""
+
+    def test_greaterThanOrEquals演算子はTrue(self):
+        assert (
+            _is_valid_filter({"greaterThanOrEquals": {"key": "year", "value": 2020}})
+            is True
+        )
+
+    def test_lessThanOrEquals演算子はTrue(self):
+        assert (
+            _is_valid_filter({"lessThanOrEquals": {"key": "year", "value": 2030}})
+            is True
+        )
+
+    def test_不正演算子が混在するとFalse(self):
+        # valid と invalid が混在 → all() で False
+        assert (
+            _is_valid_filter({"equals": {"key": "k", "value": "v"}, "invalidOp": {}})
+            is False
+        )
+
+    def test_大文字始まりEqualsはFalse(self):
+        assert _is_valid_filter({"Equals": {"key": "k", "value": "v"}}) is False
+
+    def test_複数validな演算子はTrue(self):
+        f = {
+            "equals": {"key": "category", "value": "hr"},
+            "greaterThan": {"key": "year", "value": 2020},
+        }
+        assert _is_valid_filter(f) is True
+
+    def test_VALID_OPERATORSの件数が12(self):
+        from query_handler import _VALID_OPERATORS
+
+        assert len(_VALID_OPERATORS) == 12
+
+    def test_contains演算子はFalse(self):
+        assert (
+            _is_valid_filter({"contains": {"key": "text", "value": "keyword"}}) is False
+        )
+
+    def test_between演算子はFalse(self):
+        assert (
+            _is_valid_filter({"between": {"key": "year", "gte": 2020, "lte": 2030}})
+            is False
+        )
