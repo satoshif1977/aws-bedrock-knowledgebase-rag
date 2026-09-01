@@ -13,9 +13,13 @@ Bedrock Knowledge Bases RAG クエリハンドラー
 import json
 import logging
 import os
+import sys
 from typing import Any
 
 import boto3
+
+sys.path.insert(0, os.path.dirname(__file__))
+from retry import RetryConfig, retry_call  # noqa: E402
 
 # ── ロガー設定 ───────────────────────────────────
 logger = logging.getLogger()
@@ -39,6 +43,15 @@ def _require_env(key: str) -> str:
 
 KNOWLEDGE_BASE_ID = _require_env("KNOWLEDGE_BASE_ID")
 GENERATION_MODEL_ARN = _require_env("GENERATION_MODEL_ARN")
+
+# ── リトライ設定 ─────────────────────────────────
+# Bedrock は同時実行が増えると ThrottlingException を返すため、
+# 指数バックオフ + フルジッターで自動リトライする（retry.py を参照）
+RETRY_CONFIG = RetryConfig(
+    max_attempts=int(os.environ.get("RETRY_MAX_ATTEMPTS", "4")),
+    base_delay=float(os.environ.get("RETRY_BASE_DELAY", "0.5")),
+    max_delay=float(os.environ.get("RETRY_MAX_DELAY", "8.0")),
+)
 
 # ── サポートする単項フィルター演算子 ──────────────
 _VALID_OPERATORS = frozenset(
@@ -123,7 +136,11 @@ def _retrieve_and_generate(
     session_id: str | None = None,
     filter_expr: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]], str]:
-    """RetrieveAndGenerate API を呼び出す（sessionId を渡すと会話が継続される）"""
+    """
+    RetrieveAndGenerate API を呼び出す（sessionId を渡すと会話が継続される）
+
+    ThrottlingException 等の一時エラーは retry.py の指数バックオフで自動リトライする。
+    """
     vector_search_config: dict[str, Any] = {"numberOfResults": num_results}
     if filter_expr:
         vector_search_config["filter"] = filter_expr
@@ -154,7 +171,9 @@ def _retrieve_and_generate(
     if session_id:
         params["sessionId"] = session_id  # 同じセッションに紐付けて会話を継続
 
-    response = bedrock_agent_runtime.retrieve_and_generate(**params)
+    response = retry_call(
+        bedrock_agent_runtime.retrieve_and_generate, config=RETRY_CONFIG, **params
+    )
 
     answer = response["output"]["text"]
     new_session_id = response.get("sessionId", "")
@@ -181,10 +200,12 @@ def _retrieve(
     if filter_expr:
         vector_search_config["filter"] = filter_expr
 
-    response = bedrock_agent_runtime.retrieve(
+    response = retry_call(
+        bedrock_agent_runtime.retrieve,
         knowledgeBaseId=KNOWLEDGE_BASE_ID,
         retrievalQuery={"text": query},
         retrievalConfiguration={"vectorSearchConfiguration": vector_search_config},
+        config=RETRY_CONFIG,
     )
     return [
         {
