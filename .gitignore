@@ -19,6 +19,20 @@ venv/
 # Lambda
 *.zip
 
+# Node.js（client_ts）
+node_modules/
+dist/
+coverage/
+
+# Go ビルド成果物（go build の出力）
+*.exe
+lambda_go/query_handler/query_handler
+
+# カバレッジ出力（CI が生成する）
+coverage.out
+coverage.xml
+.coverage
+
 # 機密情報
 .env
 *.secret
