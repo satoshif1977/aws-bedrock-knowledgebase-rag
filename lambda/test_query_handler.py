@@ -16,7 +16,11 @@ os.environ.setdefault(
 )
 
 sys.path.insert(0, os.path.dirname(__file__))
+from botocore.exceptions import ReadTimeoutError
+from logger import create_logger
+from metrics import create_metrics
 from query_handler import _is_valid_filter, _response, lambda_handler
+from retry import RetryConfig, retry_call
 
 
 class TestResponse:
@@ -657,3 +661,252 @@ class TestIsValidFilterExtra:
             _is_valid_filter({"between": {"key": "year", "gte": 2020, "lte": 2030}})
             is False
         )
+
+
+# ── 共通ユーティリティとの結線（logger.py / metrics.py） ──────────────
+
+
+def _capture_logger(level="info"):
+    """出力行を配列に溜めるロガーを作る"""
+    lines: list[str] = []
+    return (
+        create_logger(level=level, sink=lambda line, _level: lines.append(line)),
+        lines,
+    )
+
+
+def _capture_metrics():
+    """出力行を配列に溜めるコレクタを作る"""
+    lines: list[str] = []
+    return create_metrics("TestNamespace", sink=lines.append), lines
+
+
+class TestLoggerWiring:
+    """query_handler が標準 logging ではなく logger.py を通っていること"""
+
+    def _make_event(self, **body):
+        base = {"query": "テスト質問"}
+        base.update(body)
+        return {"body": json.dumps(base), "path": "/query", "httpMethod": "POST"}
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_受信ログが構造化JSONで出る(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答"},
+            "citations": [],
+        }
+        log, lines = _capture_logger()
+        mx, _ = _capture_metrics()
+
+        lambda_handler(self._make_event(), MagicMock(), logger=log, metrics=mx)
+
+        received = [json.loads(x) for x in lines]
+        assert any(e["message"] == "リクエストを受信しました" for e in received)
+        entry = next(e for e in received if e["message"] == "リクエストを受信しました")
+        assert entry["path"] == "/query"
+        assert entry["http_method"] == "POST"
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_イベント全体をそのまま出力しない(self, mock_bedrock):
+        """body に個人情報が入っていても生のまま残さないこと"""
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答"},
+            "citations": [],
+        }
+        event = self._make_event(query="社員番号 12345 の有給残は")
+        log, lines = _capture_logger()
+        mx, _ = _capture_metrics()
+
+        lambda_handler(event, MagicMock(), logger=log, metrics=mx)
+
+        received = [json.loads(x) for x in lines]
+        entry = next(e for e in received if e["message"] == "リクエストを受信しました")
+        # has_body というフラグだけを持ち、body 本体は持たないこと
+        assert entry["has_body"] is True
+        assert "body" not in entry
+        assert "12345" not in json.dumps(entry, ensure_ascii=False)
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_生成完了ログに件数が残る(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "有給は年10日です"},
+            "citations": [
+                {"retrievedReferences": [{"content": {"text": "規程"}}]},
+            ],
+        }
+        log, lines = _capture_logger()
+        mx, _ = _capture_metrics()
+
+        lambda_handler(self._make_event(), MagicMock(), logger=log, metrics=mx)
+
+        received = [json.loads(x) for x in lines]
+        entry = next(e for e in received if e["message"] == "回答を生成しました")
+        assert entry["citation_count"] == 1
+        assert entry["answer_length"] == len("有給は年10日です")
+
+    def test_バリデーション失敗がwarnで残る(self):
+        log, lines = _capture_logger()
+        mx, _ = _capture_metrics()
+
+        lambda_handler(
+            {"body": json.dumps({"query": ""})}, MagicMock(), logger=log, metrics=mx
+        )
+
+        received = [json.loads(x) for x in lines]
+        entry = next(e for e in received if e["message"] == "リクエストが不正です")
+        assert entry["level"] == "warn"
+        assert entry["reason"] == "query_missing"
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_例外がerrorで残る(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.side_effect = Exception("connection error")
+        log, lines = _capture_logger()
+        mx, _ = _capture_metrics()
+
+        result = lambda_handler(self._make_event(), MagicMock(), logger=log, metrics=mx)
+
+        assert result["statusCode"] == 500
+        received = [json.loads(x) for x in lines]
+        entry = next(e for e in received if e["message"] == "エラーが発生しました")
+        assert entry["level"] == "error"
+
+
+class TestMetricsWiring:
+    """query_handler が metrics.py を通って EMF を出していること"""
+
+    def _make_event(self, **body):
+        base = {"query": "テスト質問"}
+        base.update(body)
+        return {"body": json.dumps(base), "path": "/query", "httpMethod": "POST"}
+
+    def _names(self, lines):
+        """出力された EMF からメトリクス名を集める"""
+        names = set()
+        for line in lines:
+            doc = json.loads(line)
+            for directive in doc["_aws"]["CloudWatchMetrics"]:
+                names.update(m["Name"] for m in directive["Metrics"])
+        return names
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_rag成功でQueryCountとレイテンシが出る(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答"},
+            "citations": [],
+        }
+        log, _ = _capture_logger()
+        mx, lines = _capture_metrics()
+
+        lambda_handler(self._make_event(), MagicMock(), logger=log, metrics=mx)
+
+        names = self._names(lines)
+        assert "QueryCount" in names
+        assert "QueryLatency" in names
+        assert "CitationCount" in names
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_retrieveモードでChunkCountが出る(self, mock_bedrock):
+        mock_bedrock.retrieve.return_value = {
+            "retrievalResults": [
+                {"content": {"text": "a"}, "score": 0.9},
+                {"content": {"text": "b"}, "score": 0.8},
+            ]
+        }
+        log, _ = _capture_logger()
+        mx, lines = _capture_metrics()
+
+        lambda_handler(
+            self._make_event(mode="retrieve"), MagicMock(), logger=log, metrics=mx
+        )
+
+        assert "ChunkCount" in self._names(lines)
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_Modeがディメンションに入る(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.return_value = {
+            "output": {"text": "回答"},
+            "citations": [],
+        }
+        log, _ = _capture_logger()
+        mx, lines = _capture_metrics()
+
+        lambda_handler(self._make_event(), MagicMock(), logger=log, metrics=mx)
+
+        doc = json.loads(lines[0])
+        assert doc["Mode"] == "rag"
+
+    def test_バリデーション失敗でBadRequestCountが出る(self):
+        log, _ = _capture_logger()
+        mx, lines = _capture_metrics()
+
+        lambda_handler(
+            {"body": json.dumps({"query": ""})}, MagicMock(), logger=log, metrics=mx
+        )
+
+        assert "BadRequestCount" in self._names(lines)
+        assert json.loads(lines[0])["bad_request_reason"] == "query_missing"
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_例外でErrorCountが出る(self, mock_bedrock):
+        mock_bedrock.retrieve_and_generate.side_effect = Exception("boom")
+        log, _ = _capture_logger()
+        mx, lines = _capture_metrics()
+
+        lambda_handler(self._make_event(), MagicMock(), logger=log, metrics=mx)
+
+        assert "ErrorCount" in self._names(lines)
+
+    @patch("query_handler.bedrock_agent_runtime")
+    def test_成功でも失敗でもflushされる(self, mock_bedrock):
+        """finally で flush しているので、例外時も EMF が残ること"""
+        mock_bedrock.retrieve_and_generate.side_effect = Exception("boom")
+        log, _ = _capture_logger()
+        mx, lines = _capture_metrics()
+
+        lambda_handler(self._make_event(), MagicMock(), logger=log, metrics=mx)
+
+        assert len(lines) >= 1
+
+
+class TestRetryHookWiring:
+    """retry_call の on_retry がログとメトリクスの両方へ流れること"""
+
+    def test_リトライ時にwarnログとメトリクスが両方出る(self):
+        from query_handler import _retry_hook
+
+        log, log_lines = _capture_logger()
+        mx, metric_lines = _capture_metrics()
+
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 2:
+                # retry.py がリトライ対象とする botocore 例外を使う
+                raise ReadTimeoutError(endpoint_url="https://bedrock.example")
+            return "ok"
+
+        result = retry_call(
+            flaky,
+            config=RetryConfig(max_attempts=3, base_delay=0.01, max_delay=0.02),
+            sleep=lambda _s: None,
+            on_retry=_retry_hook(log, mx, "test.op"),
+        )
+        mx.flush()
+
+        assert result == "ok"
+        entry = next(
+            json.loads(x)
+            for x in log_lines
+            if json.loads(x)["message"] == "AWS API 呼び出しをリトライします"
+        )
+        assert entry["operation"] == "test.op"
+        assert entry["attempt"] == 1
+
+        doc = json.loads(metric_lines[0])
+        names = {
+            m["Name"] for d in doc["_aws"]["CloudWatchMetrics"] for m in d["Metrics"]
+        }
+        assert "RetryAttempts" in names
+        assert "RetryDelay" in names
+        assert doc["retry_operation"] == "test.op"
