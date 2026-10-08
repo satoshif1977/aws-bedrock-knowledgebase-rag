@@ -95,9 +95,9 @@ resource "aws_iam_role_policy" "bedrock_kb" {
         ]
       },
       {
-        Sid    = "OpenSearchAccess"
-        Effect = "Allow"
-        Action = ["aoss:APIAccessAll"]
+        Sid      = "OpenSearchAccess"
+        Effect   = "Allow"
+        Action   = ["aoss:APIAccessAll"]
         Resource = [var.collection_arn]
       }
     ]

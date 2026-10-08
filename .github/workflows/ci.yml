@@ -20,8 +20,12 @@ jobs:
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "~1.9"
+      # fmt はリポジトリ全体を見る。
+      # working-directory のままだと environments/dev 配下しか検査されず、
+      # modules/ のフォーマット崩れを取りこぼす。
       - name: terraform fmt
         run: terraform fmt --check -recursive
+        working-directory: .
       - name: terraform init
         run: terraform init -backend=false -input=false
       - name: terraform validate

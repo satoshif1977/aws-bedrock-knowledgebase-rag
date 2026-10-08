@@ -72,10 +72,21 @@ resource "aws_cloudwatch_log_group" "lambda" {
 }
 
 # ── Lambda ZIP パッケージ ────────────────────────
+# query_handler.py は同梱の logger.py / metrics.py / retry.py を import するため、
+# 単一ファイル（source_file）ではなくディレクトリごと固める。
+# テストと __pycache__ はデプロイに不要なので除外する。
 data "archive_file" "lambda" {
   type        = "zip"
-  source_file = "${path.root}/../../lambda/query_handler.py"
+  source_dir  = "${path.root}/../../lambda"
   output_path = "${path.module}/query_handler.zip"
+
+  excludes = [
+    "test_logger.py",
+    "test_metrics.py",
+    "test_query_handler.py",
+    "test_retry.py",
+    "__pycache__",
+  ]
 }
 
 # ── Lambda 関数 ──────────────────────────────────
@@ -92,6 +103,11 @@ resource "aws_lambda_function" "query_handler" {
     variables = {
       KNOWLEDGE_BASE_ID    = var.knowledge_base_id
       GENERATION_MODEL_ARN = local.generation_model_arn
+
+      # logger.py / metrics.py が参照する。未設定でも既定値で動く
+      LOG_LEVEL         = var.log_level
+      METRICS_NAMESPACE = var.metrics_namespace
+      METRICS_ENABLED   = var.metrics_enabled ? "true" : "false"
     }
   }
 
